@@ -1,0 +1,2 @@
+experiment_id,git_commit,seed,config,trainable_params,GPU_hours,method,benchmark_regime,rounds,accuracy,AUROC,loss,inference_calls,notes
+
