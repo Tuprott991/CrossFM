@@ -1,7 +1,7 @@
 param(
     [ValidateSet('smoke','phase1')]
     [string]$Profile = 'smoke',
-    [string]$KernelSlug = 'crossfm-phase1-smoke-t4x2',
+    [string]$KernelSlug = 'crossfm-phase-1-smoke-t4x2',
     [string]$KernelTitle = 'CrossFM Phase 1 Smoke T4x2'
 )
 

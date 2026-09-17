@@ -12,7 +12,11 @@ import sys
 import traceback
 
 
-INPUT = Path("/kaggle/input/crossfm-phase1-bundle")
+INPUT_CANDIDATES = (
+    Path("/kaggle/input/crossfm-phase1-bundle"),
+    Path("/kaggle/input/datasets/tuktuai/crossfm-phase1-bundle"),
+)
+INPUT = INPUT_CANDIDATES[0]
 WORKING = Path("/kaggle/working")
 TOP_SUMMARY = WORKING / "crossfm_summary.json"
 
@@ -47,8 +51,11 @@ def run_checked(command: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def main() -> None:
-    if not INPUT.is_dir():
-        raise FileNotFoundError(f"Expected exactly one package source at {INPUT}")
+    global INPUT
+    mounted = [path for path in INPUT_CANDIDATES if (path / "bundle_manifest.json").is_file()]
+    if len(mounted) != 1:
+        raise FileNotFoundError(f"Expected one exact package source, found {mounted}; checked {INPUT_CANDIDATES}")
+    INPUT = mounted[0]
     manifest_path = INPUT / "bundle_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     wheel = checked_file(manifest["wheel"]["name"], manifest["wheel"]["sha256"])
