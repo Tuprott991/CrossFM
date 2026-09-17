@@ -6,6 +6,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Write-Utf8NoBom([string]$Path, [string]$Content) {
+    [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
+}
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $distRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist\kaggle'))
 $expectedRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist'))
@@ -49,7 +52,7 @@ $manifest = [ordered]@{
     config = [ordered]@{ name = 'frozen_experiment.yaml'; sha256 = $configHash; bytes = (Get-Item $configTarget).Length }
     dependencies = @('tabicl==2.2.0','transformers==4.57.6','huggingface-hub==0.36.0','safetensors==0.7.0')
 }
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $datasetDir.FullName 'bundle_manifest.json') -Encoding utf8
+Write-Utf8NoBom (Join-Path $datasetDir.FullName 'bundle_manifest.json') ($manifest | ConvertTo-Json -Depth 5)
 
 $datasetMetadata = [ordered]@{
     title = 'CrossFM Phase 1 Immutable Bundle'
@@ -57,7 +60,7 @@ $datasetMetadata = [ordered]@{
     licenses = @([ordered]@{ name = 'other' })
     isPrivate = $true
 }
-$datasetMetadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $datasetDir.FullName 'dataset-metadata.json') -Encoding utf8
+Write-Utf8NoBom (Join-Path $datasetDir.FullName 'dataset-metadata.json') ($datasetMetadata | ConvertTo-Json -Depth 4)
 Copy-Item -LiteralPath (Join-Path $repo 'scripts\kaggle_driver.py') -Destination (Join-Path $kernelDir.FullName 'driver.py')
 $kernelMetadata = [ordered]@{
     id = "tuktuai/$KernelSlug"
@@ -74,8 +77,7 @@ $kernelMetadata = [ordered]@{
     kernel_sources = @()
     model_sources = @()
 }
-$kernelMetadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $kernelDir.FullName 'kernel-metadata.json') -Encoding utf8
+Write-Utf8NoBom (Join-Path $kernelDir.FullName 'kernel-metadata.json') ($kernelMetadata | ConvertTo-Json -Depth 4)
 Write-Output "Built $Profile bundle at $distRoot"
 Write-Output "wheel_sha256=$wheelHash"
 Write-Output "config_sha256=$configHash"
-
