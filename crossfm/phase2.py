@@ -37,6 +37,12 @@ def candidate_views(ep: Episode) -> list[tuple[str, tuple[int, ...]]]:
             (f"paired fields {ep.feature_names[i]} and {ep.feature_names[i + 1]}", (i, i + 1))
             for i in range(0, p, 2)
         ]
+    elif ep.regime == "C2":
+        start = len(ep.route_indices)
+        views = [
+            (f"paired fields {ep.feature_names[i]} and {ep.feature_names[i + 1]}", (i, i + 1))
+            for i in range(start, p, 2)
+        ]
     else:
         views = []
     views.append(("all fields (unrestricted statistical model)", tuple(range(p))))
@@ -317,7 +323,11 @@ def tool_prompts(ep: Episode, specialist_probability: np.ndarray) -> list[str]:
         for name, value in transforms.items():
             corr = float(np.nan_to_num(np.corrcoef(value, y)[0, 1]))
             summaries.append((abs(corr), f"corr({name}, label)={corr:+.2f}"))
-    top = "; ".join(text for _, text in sorted(summaries, reverse=True)[:8])
+    required = []
+    for feature in ep.route_indices:
+        corr = float(np.nan_to_num(np.corrcoef(ep.x_context[:, feature], y)[0, 1]))
+        required.append(f"corr({ep.feature_names[feature]}, label)={corr:+.2f}")
+    top = "; ".join(required + [text for _, text in sorted(summaries, reverse=True)[:8]])
     prompts = []
     for row, probability in zip(ep.x_query, specialist_probability):
         fields = ", ".join(f"{name}={value:.2f}" for name, value in zip(ep.feature_names, row))

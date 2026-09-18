@@ -50,8 +50,42 @@ def semantic_statistical_oracle(episodes: Iterable[Episode]) -> PredictionBatch:
     return PredictionBatch(np.asarray(probs), np.asarray(labels), np.asarray(ids))
 
 
+def adaptive_routing_oracle(episodes: Iterable[Episode]) -> PredictionBatch:
+    """Diagnostic two-stage oracle for C2; ordinary oracle elsewhere."""
+    probs, labels, ids = [], [], []
+    for ep in episodes:
+        if ep.regime != "C2":
+            batch = semantic_statistical_oracle([ep])
+            probs.extend(batch.probabilities.tolist()); labels.extend(batch.labels.tolist()); ids.extend(batch.episode_ids.tolist())
+            continue
+        code = 0
+        for bit, feature in enumerate(ep.route_indices):
+            corr = float(np.nan_to_num(np.corrcoef(ep.x_context[:, feature], ep.y_context)[0, 1]))
+            if corr >= 0:
+                code |= 1 << bit
+        group = ep.route_map[code]
+        a = len(ep.route_indices) + 2 * group
+        b = a + 1
+        if ep.mechanism == "train":
+            context_signal = ep.x_context[:, b] - ep.x_context[:, a]
+            query_signal = ep.x_query[:, b] - ep.x_query[:, a]
+        elif ep.mechanism == "validation":
+            context_signal = ep.x_context[:, b] + ep.x_context[:, a]
+            query_signal = ep.x_query[:, b] + ep.x_query[:, a]
+        elif ep.mechanism == "test":
+            context_signal = ep.x_context[:, b] * ep.x_context[:, a]
+            query_signal = ep.x_query[:, b] * ep.x_query[:, a]
+        else:
+            raise ValueError(ep.mechanism)
+        direction = 1.0 if np.nan_to_num(np.corrcoef(context_signal, ep.y_context)[0, 1]) >= 0 else -1.0
+        score = direction * query_signal
+        probs.extend((1.0 / (1.0 + np.exp(-2.0 * score))).tolist())
+        labels.extend(ep.y_query.tolist()); ids.extend([ep.episode_id] * len(ep.y_query))
+    return PredictionBatch(np.asarray(probs), np.asarray(labels), np.asarray(ids))
+
+
 def build_llm_prompts(ep: Episode, max_context_rows: int = 48) -> list[str]:
-    rows = min(len(ep.y_context), max_context_rows)
+    rows = min(len(ep.y_context), 6 if ep.regime == "C2" else max_context_rows)
     def named_row(values: np.ndarray, indices: Iterable[int] | None = None) -> str:
         selected = range(len(ep.feature_names)) if indices is None else indices
         return ", ".join(f"{ep.feature_names[i]}={values[i]:.2f}" for i in selected)

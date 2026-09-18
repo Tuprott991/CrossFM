@@ -53,3 +53,11 @@ The learned adapters used 1,463,430 parameters total (599,557 LLM-to-TFM; 863,87
 Phase 2 falsifies the claim that recurrent bidirectional communication is necessary for the current Regime C. A simple learned one-way semantic view selector already recovers most of the diagnostic oracle's capability and generalizes across held-out aliases and a held-out product mechanism. This is a useful negative result: implementing CrossFM-R on this benchmark would not provide a clean test of the central novelty claim.
 
 Do not proceed to Phase 3 on the current C regime. First redesign C so that a single up-front choice of feature subset cannot solve it. The next benchmark should require specialist evidence to trigger a second, different semantic query—for example, episode-specific exceptions or conflicts where the relevant group itself changes conditional on the first statistical finding. That redesign must preserve A/B calibration, use a new exploratory protocol ID, and be frozen before inspecting outcomes.
+
+## Phase 2.5 adaptive gate protocol
+
+Regime C2 instantiates the required evidence-dependent query. Four routing markers encode a 4-bit local code through the signs of their context-label correlations. A natural-language codebook maps each of the 16 codes to one semantic feature pair. All 16 pairs are deliberately plausible context proxies, but only the routed pair remains predictive for query rows. After routing, the selected pair's episode-specific direction and held-out transformation must still be inferred from labels.
+
+The splits jointly hold out feature aliases, codebook permutations, and mechanisms: difference with an identity codebook during training, sum with a permuted codebook during validation, and product with a different permutation during test. A numerical-only leakage check gave 0.5175 for per-episode logistic regression and 0.4888 for ExtraTrees, while the adaptive diagnostic reached 0.9300 on 50 local test episodes.
+
+The frozen exploratory gate requires the diagnostic oracle to reach 0.80, the one-call LLM-to-TFM control to remain at or below 0.62, the three-call nonadaptive control at or below 0.68, and every learned/tool baseline at or below 0.70. If any strong baseline exceeds its threshold, recurrent CrossFM remains unjustified and the gate fails by design.

@@ -9,9 +9,6 @@ import numpy as np
 import yaml
 
 from .io import atomic_json, canonical_digest, sha256_file
-from .phase2_worker import METHODS
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -19,10 +16,12 @@ def main() -> None:
     parser.add_argument("--wheel", required=True)
     args = parser.parse_args()
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    methods = tuple(config["experiment"]["methods"])
+    prefix = config["experiment"].get("artifact_prefix", "phase2")
     output = Path(args.output)
     expected = {
-        f"phase2-{method}-{regime}-seed{seed}"
-        for method in METHODS
+        f"{prefix}-{method}-{regime}-seed{seed}"
+        for method in methods
         for regime in config["experiment"]["regimes"]
         for seed in config["experiment"]["test_seeds"]
     }
@@ -63,7 +62,7 @@ def main() -> None:
     for regime in config["experiment"]["regimes"]:
         results[regime] = {}
         per_method = {}
-        for method in METHODS:
+        for method in methods:
             values = np.asarray([r["score"] for r in records if r["condition"] == regime and r["method"] == method])
             per_method[method] = values
             standard_error = float(values.std(ddof=1) / np.sqrt(len(values))) if len(values) > 1 else 0.0
@@ -94,8 +93,25 @@ def main() -> None:
         "trainable_params_total": max(item["trainable_params_total"] for item in worker_summaries),
         "peak_gpu_memory_bytes": max(item["peak_gpu_memory_bytes"] for item in worker_summaries),
         "worker_elapsed_seconds": [item["elapsed_seconds"] for item in worker_summaries],
-        "scientific_scope": "Exploratory Phase 2 baseline calibration only. No CrossFM result or novelty claim.",
+        "scientific_scope": (
+            "Exploratory Phase 2.5 adaptive-complementarity gate. No CrossFM result or novelty claim."
+            if "C2" in config["experiment"]["regimes"]
+            else "Exploratory Phase 2 baseline calibration only. No CrossFM result or novelty claim."
+        ),
     }
+    if "adaptive_diagnostic_oracle" in methods and "C2" in results:
+        gate = config["gate"]
+        baseline_methods = [method for method in methods if method != "adaptive_diagnostic_oracle"]
+        checks = {
+            "A_semantics_dominant": results["A"]["llm_only"]["mean_accuracy"] >= results["A"]["tabicl_only"]["mean_accuracy"] + float(gate["a_margin"]),
+            "B_statistics_dominant": results["B"]["tabicl_only"]["mean_accuracy"] >= results["B"]["llm_only"]["mean_accuracy"] + float(gate["b_margin"]),
+            "C2_adaptively_recoverable": results["C2"]["adaptive_diagnostic_oracle"]["mean_accuracy"] >= float(gate["oracle_min"]),
+            "C2_one_call_insufficient": results["C2"]["llm_to_tfm"]["mean_accuracy"] <= float(gate["one_call_max"]),
+            "C2_three_nonadaptive_calls_insufficient": results["C2"]["llm_to_tfm_compute_matched"]["mean_accuracy"] <= float(gate["three_call_max"]),
+            "C2_all_strong_baselines_insufficient": max(results["C2"][method]["mean_accuracy"] for method in baseline_methods) <= float(gate["all_baseline_max"]),
+        }
+        summary["adaptive_gate_checks"] = checks
+        summary["adaptive_gate_passed"] = all(checks.values())
     atomic_json(output / "summary.json", summary)
     print(json.dumps(summary, indent=2))
 

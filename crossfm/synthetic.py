@@ -16,6 +16,25 @@ ALIASES = {
     "age": ["customer_age", "age_years", "client_age"],
 }
 
+C2_GROUP_ALIASES = (
+    (("annual_income", "yearly_earnings", "household_revenue"), ("monthly_premium", "policy_fee", "insurance_cost")),
+    (("late_payment_count", "payment_delays", "overdue_installments"), ("claim_count", "reported_incidents", "insurance_claims")),
+    (("customer_tenure", "months_with_company", "policy_age"), ("engagement_score", "activity_index", "participation_level")),
+    (("customer_age", "age_years", "client_age"), ("dependent_count", "household_dependents", "covered_family_size")),
+    (("visit_frequency", "annual_visits", "service_visits"), ("usage_volume", "consumption_level", "service_usage")),
+    (("support_tickets", "help_requests", "service_cases"), ("escalation_count", "raised_complaints", "critical_cases")),
+    (("deductible_amount", "excess_amount", "policy_deductible"), ("coverage_limit", "insured_limit", "benefit_ceiling")),
+    (("account_balance", "current_balance", "ledger_balance"), ("autopay_rate", "automatic_payment_share", "recurring_payment_ratio")),
+    (("body_mass_index", "bmi_measure", "weight_index"), ("medication_count", "active_prescriptions", "medicine_total")),
+    (("annual_salary", "employment_income", "wage_level"), ("job_change_count", "employer_changes", "career_transitions")),
+    (("monthly_rent", "rental_cost", "lease_payment"), ("mortgage_balance", "home_loan_balance", "housing_debt")),
+    (("credit_score", "credit_rating", "borrower_score"), ("debt_ratio", "leverage_ratio", "debt_burden")),
+    (("purchase_spend", "transaction_value", "shopping_total"), ("refund_count", "returned_orders", "reimbursement_events")),
+    (("login_frequency", "account_logins", "session_count"), ("security_alerts", "risk_notifications", "fraud_warnings")),
+    (("annual_mileage", "distance_traveled", "vehicle_miles"), ("trip_count", "journey_frequency", "travel_events")),
+    (("outage_minutes", "service_downtime", "interruption_duration"), ("network_latency", "response_delay", "connection_lag")),
+)
+
 
 @dataclass(frozen=True)
 class Episode:
@@ -29,6 +48,9 @@ class Episode:
     y_query: np.ndarray
     relevant: tuple[int, ...]
     mechanism: str = "pilot"
+    route_indices: tuple[int, ...] = ()
+    route_map: tuple[int, ...] = ()
+    route_code: int = -1
 
     def checksum(self) -> str:
         h = hashlib.sha256()
@@ -36,11 +58,13 @@ class Episode:
             h.update(value.encode("utf-8"))
         for array in (self.x_context, self.y_context, self.x_query, self.y_query):
             h.update(np.ascontiguousarray(array).tobytes())
+        if self.route_indices:
+            h.update(json.dumps([self.route_indices, self.route_map, self.route_code]).encode())
         return h.hexdigest()
 
 
 def _rng(seed: int, regime: str, index: int) -> np.random.Generator:
-    regime_code = {"A": 11, "B": 23, "C": 37}[regime]
+    regime_code = {"A": 11, "B": 23, "C": 37, "C2": 53}[regime]
     return np.random.default_rng(np.random.SeedSequence([seed, regime_code, index]))
 
 
@@ -172,6 +196,80 @@ def make_episode(
             "The auxiliary columns are unstable proxies. Values are standardized."
         )
         relevant = (0, 1)
+        route_indices, route_map, route_code = (), (), -1
+    elif regime == "C2":
+        n_context, branches, route_width = 32, 16, 4
+        p = route_width + 2 * branches
+        alias_index = {"train": 0, "validation": 1, "test": 2}.get(alias_split)
+        if alias_index is None:
+            raise ValueError("C2 requires a declared train/validation/test alias split")
+        probe_prefix = ("audit_probe", "validation_indicator", "local_marker")[alias_index]
+        probe_names = [f"{probe_prefix}_{i + 1}" for i in range(route_width)]
+        pair_names = [name for pair in C2_GROUP_ALIASES for name in (pair[0][alias_index], pair[1][alias_index])]
+        names = tuple(probe_names + pair_names)
+        if mechanism_split == "train":
+            route_map = tuple(range(branches))
+            mechanism = "difference"
+        elif mechanism_split == "validation":
+            route_map = tuple((5 * code + 1) % branches for code in range(branches))
+            mechanism = "sum"
+        elif mechanism_split == "test":
+            route_map = tuple((7 * code + 3) % branches for code in range(branches))
+            mechanism = "product"
+        else:
+            raise ValueError("C2 requires a declared train/validation/test mechanism split")
+        route_code = int(rng.integers(0, branches))
+        active_group = route_map[route_code]
+        direction = int(rng.choice([-1, 1]))
+        stable_context = rng.normal(size=n_context)
+        stable_query = rng.normal(size=n_query)
+        bit_signs = np.asarray([1.0 if route_code & (1 << bit) else -1.0 for bit in range(route_width)])
+        route_context = np.column_stack([
+            bit * direction * stable_context + rng.normal(0, 0.04, n_context) for bit in bit_signs
+        ])
+        route_query = rng.normal(size=(n_query, route_width))
+        context_signals = [
+            0.96 * stable_context + np.sqrt(1 - 0.96**2) * rng.normal(size=n_context)
+            for _ in range(branches)
+        ]
+        query_signals = [rng.normal(size=n_query) for _ in range(branches)]
+        context_signals[active_group] = stable_context
+        query_signals[active_group] = stable_query
+
+        def c2_pairs(signals: list[np.ndarray]) -> np.ndarray:
+            cols: list[np.ndarray] = []
+            for signal in signals:
+                if mechanism == "difference":
+                    center = rng.normal(0, 0.7, size=len(signal))
+                    cols.extend([center - signal / 2, center + signal / 2])
+                elif mechanism == "sum":
+                    delta = rng.normal(0, 0.7, size=len(signal))
+                    cols.extend([signal / 2 - delta, signal / 2 + delta])
+                else:
+                    first = rng.choice([-1.0, 1.0], size=len(signal)) * rng.uniform(0.65, 1.35, size=len(signal))
+                    cols.extend([first, signal / first])
+            return np.column_stack(cols).astype(np.float32)
+
+        xc = np.column_stack([route_context, c2_pairs(context_signals)]).astype(np.float32)
+        xq = np.column_stack([route_query, c2_pairs(query_signals)]).astype(np.float32)
+        sc, sq = direction * stable_context, direction * stable_query
+        yc = _labels_from_context_threshold(sc, rng.normal(0, 0.22, n_context), n_context)
+        yq = (sq + rng.normal(0, 0.22, n_query) > 0).astype(np.int64)
+        x, y = np.row_stack([xc, xq]), np.concatenate([yc, yq])
+        entries = []
+        for code, group in enumerate(route_map):
+            pattern = "".join("P" if code & (1 << bit) else "N" for bit in range(route_width))
+            a, b = pair_names[2 * group:2 * group + 2]
+            entries.append(f"{pattern}->{a} with {b}")
+        desc = (
+            "Predict the binary outcome using an adaptive local code. Estimate whether each of the four marker fields has "
+            "positive (P) or negative (N) context correlation with the label, in marker order. The resulting code selects "
+            "the only stable feature pair: " + "; ".join(entries) + ". Marker fields and all nonselected pairs are unstable "
+            "context shortcuts. After selecting the pair, infer its local transformation and direction from labels."
+        )
+        pair_start = route_width + 2 * active_group
+        relevant = (pair_start, pair_start + 1)
+        route_indices = tuple(range(route_width))
     else:
         raise ValueError(f"Unknown regime: {regime}")
     return Episode(
@@ -189,6 +287,9 @@ def make_episode(
         y_query=y[n_context:],
         relevant=relevant,
         mechanism=mechanism_split,
+        route_indices=route_indices if regime == "C2" else (),
+        route_map=route_map if regime == "C2" else (),
+        route_code=route_code if regime == "C2" else -1,
     )
 
 

@@ -13,7 +13,7 @@ import numpy as np
 import yaml
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 
-from .baselines import QwenBinaryBaseline, TabICLBaseline
+from .baselines import QwenBinaryBaseline, TabICLBaseline, adaptive_routing_oracle
 from .io import atomic_json, canonical_digest, sha256_file
 from .phase2 import (
     SoftPrefixAdapter, ViewScorer, attach_language_embeddings, collect_specialist_evidence,
@@ -22,7 +22,7 @@ from .phase2 import (
 from .synthetic import Episode, make_episodes, split_hash
 
 
-METHODS = (
+DEFAULT_METHODS = (
     "llm_only", "tabicl_only", "prediction_ensemble", "llm_to_tfm",
     "tfm_to_llm", "textual_tool", "llm_to_tfm_compute_matched",
 )
@@ -172,6 +172,7 @@ def main() -> None:
                 for ep in regime_episodes
             ])
 
+            oracle_probability = adaptive_routing_oracle(regime_episodes).probabilities
             values = {
                 "llm_only": (llm_probability, 0, len(labels), 0),
                 "tabicl_only": (tfm_probability, len(regime_episodes), 0, 0),
@@ -180,9 +181,12 @@ def main() -> None:
                 "tfm_to_llm": (t2l_probability, len(regime_episodes), math.ceil(len(labels) / int(config["training"]["t2l_batch_size"])), t2l.trainable_params),
                 "textual_tool": (textual_probability, len(regime_episodes), len(labels), 0),
                 "llm_to_tfm_compute_matched": (l2t3_probability, 3 * len(regime_episodes), 0, l2t.trainable_params),
+                "adaptive_diagnostic_oracle": (oracle_probability, 0, 0, 0),
             }
-            for method, (probability, specialist_calls, llm_calls, trainable_params) in values.items():
-                experiment_id = f"phase2-{method}-{regime}-seed{seed}"
+            for method in config["experiment"]["methods"]:
+                probability, specialist_calls, llm_calls, trainable_params = values[method]
+                prefix = config["experiment"].get("artifact_prefix", "phase2")
+                experiment_id = f"{prefix}-{method}-{regime}-seed{seed}"
                 prediction_path = output / "predictions" / f"{experiment_id}.npz"
                 _atomic_npz(prediction_path, probability=probability, label=labels, episode_id=ids)
                 record = {
@@ -192,7 +196,8 @@ def main() -> None:
                     "classification": config["experiment"]["classification"],
                     "git_commit": config["source"]["git_commit"], "source_dirty": bool(config["source"]["dirty"]),
                     "config_digest": config_digest, "wheel_sha256": wheel_sha,
-                    "dataset": "crossfm-synthetic-v2", "dataset_revision": "heldout-alias-and-mechanism",
+                    "dataset": "crossfm-synthetic-v3-adaptive" if "C2" in config["experiment"]["regimes"] else "crossfm-synthetic-v2",
+                    "dataset_revision": "adaptive-routing-heldout-codebook-alias-and-mechanism" if "C2" in config["experiment"]["regimes"] else "heldout-alias-and-mechanism",
                     "dataset_checksum": canonical_digest([ep.checksum() for ep in regime_episodes]),
                     "condition": regime, "seed": seed, "split_hash": split_hash(regime_episodes),
                     "model": f"{llm_cfg['id']} + {tfm_cfg['id']}",

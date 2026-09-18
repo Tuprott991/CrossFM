@@ -39,10 +39,16 @@ def main() -> None:
     assert config["source"]["dirty"] is False and config["source"]["git_commit"] != "BUILD_TIME"
     if config["experiment"]["protocol_id"].startswith("crossfm-phase2"):
         assert config["experiment"]["classification"].startswith("exploratory")
-        assert set(config["experiment"]["methods"]) == {
+        expected_methods = {
             "llm_only", "tabicl_only", "prediction_ensemble", "llm_to_tfm",
             "tfm_to_llm", "textual_tool", "llm_to_tfm_compute_matched",
         }
+        if "C2" in config["experiment"]["regimes"]:
+            expected_methods.add("adaptive_diagnostic_oracle")
+            assert set(config["gate"]) == {
+                "a_margin", "b_margin", "oracle_min", "one_call_max", "three_call_max", "all_baseline_max",
+            }
+        assert set(config["experiment"]["methods"]) == expected_methods
         assert [config["data"][name]["alias_split"] for name in ("train", "validation", "test")] == [
             "train", "validation", "test",
         ]

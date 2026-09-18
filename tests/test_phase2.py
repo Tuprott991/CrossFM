@@ -1,6 +1,6 @@
 import numpy as np
 
-from crossfm.baselines import semantic_statistical_oracle
+from crossfm.baselines import adaptive_routing_oracle, semantic_statistical_oracle
 from crossfm.phase2 import candidate_views, tool_prompts, tune_ensemble_alpha
 from crossfm.synthetic import make_episode, make_episodes
 
@@ -42,3 +42,27 @@ def test_ensemble_alpha_is_validation_loss_tuned():
     alpha, loss = tune_ensemble_alpha(labels, llm, tfm)
     assert alpha == 1.0
     assert np.isfinite(loss)
+
+
+def test_c2_requires_routing_and_adaptive_oracle_recovers_test_mechanism():
+    episodes = make_episodes(
+        "C2", 71, 256, n_query=16, alias_split="test", mechanism_split="test",
+    )
+    assert all(ep.x_context.shape == (32, 36) for ep in episodes)
+    assert all(len(ep.route_indices) == 4 and sorted(ep.route_map) == list(range(16)) for ep in episodes)
+    assert all(ep.relevant[0] >= 4 and ep.mechanism == "test" for ep in episodes)
+    batch = adaptive_routing_oracle(episodes)
+    assert np.mean((batch.probabilities >= 0.5) == batch.labels) > 0.80
+    counts = np.bincount([ep.route_code for ep in episodes], minlength=16)
+    assert counts.max() / counts.sum() < 0.12
+
+
+def test_c2_codebook_and_aliases_are_held_out():
+    train = make_episode("C2", 83, 0, alias_split="train", mechanism_split="train")
+    validation = make_episode("C2", 83, 0, alias_split="validation", mechanism_split="validation")
+    test = make_episode("C2", 83, 0, alias_split="test", mechanism_split="test")
+    assert len({train.route_map, validation.route_map, test.route_map}) == 3
+    assert train.feature_names[4] == "annual_income"
+    assert validation.feature_names[4] == "yearly_earnings"
+    assert test.feature_names[4] == "household_revenue"
+    assert len(candidate_views(test)) == 17
