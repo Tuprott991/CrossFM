@@ -88,6 +88,26 @@ def main() -> None:
             }
             assert int(config["training"]["max_rounds"]) == 2
             assert config["runtime"]["cache"] == "in_memory_gpu_after_backbone_unload"
+    if config["experiment"]["protocol_id"].startswith("crossfm-phase4"):
+        assert config["experiment"]["classification"].startswith("exploratory")
+        assert set(config["experiment"]["methods"]) == {
+            "crossfm_r1_shared", "crossfm_r2_shared", "crossfm_r3_corrective",
+            "crossfm_r3_zero_t2l", "crossfm_r3_shuffle_t2l", "crossfm_r3_t2l_only",
+            "crossfm_r3_l2t_only_compute_matched", "crossfm_r3_stopgrad_l2t",
+            "crossfm_r3_stopgrad_t2l", "crossfm_r3_random_bridge",
+        }
+        assert int(config["training"]["max_rounds"]) == 3
+        assert int(config["training"]["max_trainable_params"]) <= 5_000_000
+        assert config["runtime"]["cache"] == "single_shared_in_memory_gpu_backbone_cache"
+        assert config["round3"]["behavior"] == "corrective_residual_update"
+        assert config["round3"]["label_access_at_inference"] is False
+        assert config["routing"] == {
+            "fallback_threshold": 0.10, "states": 16,
+            "representation": "continuous_posterior", "residual_bypass": "exact",
+        }
+        if "smoke" not in config["experiment"]["protocol_id"]:
+            assert len(config["experiment"]["test_seeds"]) == 5
+            assert sum(int(value) for value in config["data"]["test"]["episodes"].values()) == 100
     assert (kernel / kernel_metadata["code_file"]).is_file()
     print(json.dumps({
         "status": "valid", "bundle": str(root), "protocol_id": config["experiment"]["protocol_id"],

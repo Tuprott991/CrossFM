@@ -2,6 +2,7 @@ import numpy as np
 
 from crossfm.phase3 import CrossFMEpisodeCache, CrossFMLatentLoop, pack_cache
 from crossfm.phase3_dynamic import DynamicEvidenceBridge
+from crossfm.phase4 import CrossFMCorrectiveLoop
 
 
 def _item(
@@ -90,3 +91,54 @@ def test_dynamic_evidence_bridge_fits_rich_hidden_messages_on_cpu():
     assert bridge.trainable_params < 5_000_000
     assert report["train_mse"] < np.mean((before - targets) ** 2)
     assert not np.array_equal(before, after)
+
+
+def test_corrective_round_three_uses_new_gate_and_residual_attention():
+    packed = pack_cache([_item("p4-0", 0.9), _item("p4-1", 0.8)], "cpu")
+    model = CrossFMCorrectiveLoop(12, 8, 3, "cpu", 31)
+    two, trace_two = model.module(packed, 2)
+    three, trace_three = model.module(packed, 3)
+    assert two.shape == three.shape == (2, 4)
+    assert len(trace_two["weights"]) == 2
+    assert len(trace_three["weights"]) == 3
+    assert trace_three["update_gate"][2].shape == (2, 4)
+    assert not np.allclose(
+        trace_three["weights"][1].detach().numpy(),
+        trace_three["weights"][2].detach().numpy(),
+    )
+    assert model.trainable_params < 5_000_000
+
+
+def test_corrective_loop_preserves_zero_gate_exactly():
+    packed = pack_cache([_item("p4-a", 0.0)], "cpu")
+    model = CrossFMCorrectiveLoop(12, 8, 3, "cpu", 37)
+    probability, _ = model.module(packed, 3)
+    assert np.array_equal(probability.detach().numpy()[0], packed["llm_probability"].numpy()[0])
+
+
+def test_phase4_causal_modes_are_executable_and_distinct():
+    packed = pack_cache([_item("p4-c0", 0.9), _item("p4-c1", 0.8)], "cpu")
+    model = CrossFMCorrectiveLoop(12, 8, 3, "cpu", 41)
+    normal, _ = model.module(packed, 3, "normal")
+    zero, _ = model.module(packed, 3, "zero_t2l")
+    shuffled, _ = model.module(packed, 3, "shuffle_t2l")
+    t2l, _ = model.module(packed, 3, "t2l_only")
+    l2t, _ = model.module(packed, 3, "l2t_only")
+    assert all(value.shape == (2, 4) for value in (normal, zero, shuffled, t2l, l2t))
+    assert not np.allclose(normal.detach().numpy(), zero.detach().numpy())
+    assert not np.allclose(normal.detach().numpy(), shuffled.detach().numpy())
+
+
+def test_corrective_loop_trains_with_shared_depth_supervision():
+    items = [_item(f"p4-train-{index}", 0.9) for index in range(4)]
+    packed = pack_cache(items, "cpu")
+    model = CrossFMCorrectiveLoop(12, 8, 3, "cpu", 43)
+    report = model.fit(
+        packed, packed, rounds=3, epochs=2, batch_size=2,
+        learning_rate=1e-3, patience=2, deep_supervision=True,
+    )
+    probability, labels, traces = model.predict(packed, 3, 2)
+    assert report["max_gradient_norm"] > 0
+    assert probability.shape == labels.shape == (16,)
+    assert traces["weights"].shape == (4, 3, 4, 17)
+    assert traces["update_gate"].shape == (4, 3, 4)
