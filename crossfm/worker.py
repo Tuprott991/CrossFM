@@ -110,6 +110,7 @@ def main() -> None:
             "artifact_schema_version": "1.0.0",
             "status": "complete",
             "method": method,
+            "llm_evaluation": config["experiment"].get("llm_evaluation", "legacy_immediate_token"),
             "n_predictions": int(len(batch.labels)),
             "inference_calls": int(len(batch.labels)) if method == "llm_only" else int(len(episodes)),
             "trainable_params": 0,

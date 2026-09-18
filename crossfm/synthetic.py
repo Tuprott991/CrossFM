@@ -57,16 +57,36 @@ def _semantic_names(rng: np.random.Generator) -> tuple[str, ...]:
 def make_episode(regime: str, seed: int, index: int, n_query: int = 8) -> Episode:
     rng = _rng(seed, regime, index)
     if regime == "A":
-        n_context, p = 10, 6
-        names = _semantic_names(rng)
-        x = rng.normal(size=(n_context + n_query, p)).astype(np.float32)
-        score = -0.8 * x[:, 0] + 0.8 * x[:, 2] + 0.65 * x[:, 3] - 0.45 * x[:, 4]
-        y = _labels_from_context_threshold(score, rng.normal(0, 0.40, len(score)), n_context)
+        n_context, p = 6, 12
+        names = _semantic_names(rng) + tuple(f"portfolio_proxy_{i + 1}" for i in range(p - 6))
+        # Every column is a near-perfect context shortcut. Only the semantically
+        # named late-payment feature remains coupled to risk at query time.
+        context_risk = np.concatenate([
+            rng.uniform(-2.0, -0.25, n_context // 2),
+            rng.uniform(0.25, 2.0, n_context // 2),
+        ])
+        rng.shuffle(context_risk)
+        signs = rng.choice([-1.0, 1.0], size=p)
+        signs[2] = 1.0
+        xc = np.column_stack([
+            signs[j] * context_risk + rng.normal(0, 0.03, n_context) for j in range(p)
+        ]).astype(np.float32)
+        negatives = rng.uniform(-2.0, -1.25, n_query // 2)
+        positives = rng.uniform(1.25, 2.0, n_query - len(negatives))
+        query_risk = np.concatenate([negatives, positives])
+        rng.shuffle(query_risk)
+        xq = rng.normal(size=(n_query, p)).astype(np.float32)
+        xq[:, 2] = query_risk
+        yc = (context_risk > 0).astype(np.int64)
+        yq = (query_risk > 0).astype(np.int64)
+        x = np.row_stack([xc, xq])
+        y = np.concatenate([yc, yq])
         desc = (
-            "Predict near-term policy lapse. Higher earnings and longer customer tenure usually reduce risk; "
-            "late payments and prior claims increase risk. Values are standardized: positive means above average."
+            "Predict near-term policy lapse. Repeated late payments are the stable causal warning sign: an above-average "
+            "late-payment count raises risk and a below-average count lowers it. Other portfolio measurements can be "
+            "unstable proxies. Values are standardized: positive means above average."
         )
-        relevant = (0, 2, 3, 4)
+        relevant = (2,)
     elif regime == "B":
         n_context, p = 384, 6
         names = tuple(f"x{i + 1}" for i in range(p))

@@ -1,0 +1,33 @@
+experiment:
+  protocol_id: crossfm-phase1-pilot-v2-constrained
+  classification: exploratory_pilot
+  seeds: [1701, 1702, 1703]
+  regimes: [A, B, C]
+  methods: [llm_only, tabicl_only, semantic_statistical_oracle]
+  episodes_per_cell: 40
+  queries_per_episode: 8
+  llm_evaluation: deterministic_generation_strict_final_low_high
+models:
+  llm:
+    id: Qwen/Qwen2.5-1.5B-Instruct
+    revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    dtype: float16
+  specialist:
+    id: jingang/TabICL
+    package: tabicl==2.2.0
+    revision: 4dcd344ece2c00be9e831fdd35bed57b5ad83e19
+    source_revision: 0dbff3ec8fc68c123c87af77b0ea8b25cd2d23f3
+    checkpoint: tabicl-classifier-v2-20260212.ckpt
+runtime:
+  expected_gpus: 2
+  gpu_family: NVIDIA Tesla T4
+  llm_batch_size: 4
+  torch_dtype: float16
+  attention: sdpa
+source:
+  git_commit: BUILD_TIME
+  dirty: BUILD_TIME
+gate:
+  margins: {A: 0.05, B: 0.05, C: 0.15}
+  c_individual_max: 0.65
+  c_oracle_min: 0.75

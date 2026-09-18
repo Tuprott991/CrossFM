@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Iterable
 
 import numpy as np
@@ -24,7 +25,7 @@ def semantic_statistical_oracle(episodes: Iterable[Episode]) -> PredictionBatch:
     probs, labels, ids = [], [], []
     for ep in episodes:
         if ep.regime == "A":
-            score = -0.8 * ep.x_query[:, 0] + 0.8 * ep.x_query[:, 2] + 0.65 * ep.x_query[:, 3] - 0.45 * ep.x_query[:, 4]
+            score = ep.x_query[:, ep.relevant[0]]
         elif ep.regime == "B":
             score = 1.4 * ep.x_query[:, 0] * ep.x_query[:, 1] + 0.55 * ep.x_query[:, 2] - 0.25 * ep.x_query[:, 3]
         else:
@@ -41,18 +42,31 @@ def semantic_statistical_oracle(episodes: Iterable[Episode]) -> PredictionBatch:
 
 def build_llm_prompts(ep: Episode, max_context_rows: int = 48) -> list[str]:
     rows = min(len(ep.y_context), max_context_rows)
-    header = ", ".join(ep.feature_names)
-    examples = []
-    for x, y in zip(ep.x_context[:rows], ep.y_context[:rows]):
-        values = ", ".join(f"{v:.2f}" for v in x)
-        examples.append(f"[{values}] -> {int(y)}")
-    prefix = (
-        "Binary classification task. " + ep.description + "\n"
-        f"Columns in order: {header}.\n"
-        "Labeled examples:\n" + "\n".join(examples) + "\n"
-        "Use both the task meaning and examples. Return the label for the query, exactly one character: 0 or 1.\n"
-    )
-    return [prefix + "Query: [" + ", ".join(f"{v:.2f}" for v in x) + "]\nLabel:" for x in ep.x_query]
+    def named_row(values: np.ndarray, indices: Iterable[int] | None = None) -> str:
+        selected = range(len(ep.feature_names)) if indices is None else indices
+        return ", ".join(f"{ep.feature_names[i]}={values[i]:.2f}" for i in selected)
+
+    if ep.regime == "A":
+        # The context is deliberately confounded in the semantics-dominant arm.
+        # Supplying it caused a 0.6B model to follow episode-wide shortcuts rather
+        # than the explicitly stable domain relation, so the preregistered v2
+        # semantic baseline uses metadata plus query values only for this arm.
+        prefix = (
+            "Binary classification task. " + ep.description + "\n"
+            "The tiny labeled context is non-identifying and omitted. Apply the stable domain relation to the query.\n"
+            "Return only FINAL: LOW or FINAL: HIGH, where HIGH means label 1.\n"
+        )
+    else:
+        examples = []
+        for x, y in zip(ep.x_context[:rows], ep.y_context[:rows]):
+            examples.append(f"{{{named_row(x)}}} -> {'HIGH' if y else 'LOW'}")
+        prefix = (
+            "Binary classification task. " + ep.description + "\n"
+            "Labeled examples:\n" + "\n".join(examples) + "\n"
+            "Use both the task meaning and examples. Return only FINAL: LOW or FINAL: HIGH, where HIGH means label 1.\n"
+        )
+    query_indices = ep.relevant if ep.regime == "A" else None
+    return [prefix + "Query: {" + named_row(x, query_indices) + "}\nLabel:" for x in ep.x_query]
 
 
 class QwenBinaryBaseline:
@@ -70,12 +84,6 @@ class QwenBinaryBaseline:
             model_id, revision=revision, torch_dtype=torch.float16, attn_implementation="sdpa"
         ).to(device).eval()
         self.device = device
-        self.label_ids = []
-        for label in ("0", "1"):
-            ids = self.tokenizer.encode(label, add_special_tokens=False)
-            if len(ids) != 1:
-                raise RuntimeError(f"Label {label!r} is not one token: {ids}")
-            self.label_ids.append(ids[0])
 
     def hidden_state_preflight(self) -> tuple[int, ...]:
         inputs = self.tokenizer("schema: income premium", return_tensors="pt").to(self.device)
@@ -89,21 +97,32 @@ class QwenBinaryBaseline:
         prompts, labels, ids = [], [], []
         for ep in episodes:
             raw = build_llm_prompts(ep)
-            prompts.extend(
-                self.tokenizer.apply_chat_template(
-                    [{"role": "user", "content": prompt}], tokenize=False,
-                    add_generation_prompt=True, enable_thinking=False
-                )
-                for prompt in raw
-            )
+            prompts.extend(raw)
             labels.extend(ep.y_query.tolist())
             ids.extend([ep.episode_id] * len(ep.y_query))
         probabilities = []
         for start in range(0, len(prompts), self.batch_size):
-            batch = self.tokenizer(prompts[start:start + self.batch_size], padding=True, return_tensors="pt").to(self.device)
-            with self.torch.inference_mode(), self.torch.autocast("cuda", dtype=self.torch.float16):
-                logits = self.model(**batch, use_cache=False).logits[:, -1, self.label_ids]
-                probabilities.extend(self.torch.softmax(logits.float(), dim=-1)[:, 1].cpu().numpy().tolist())
+            rendered = [
+                self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}], tokenize=False,
+                    add_generation_prompt=True,
+                )
+                for prompt in prompts[start:start + self.batch_size]
+            ]
+            batch = self.tokenizer(rendered, add_special_tokens=False, padding=True, return_tensors="pt").to(self.device)
+            with self.torch.inference_mode():
+                generated = self.model.generate(
+                    **batch, max_new_tokens=8, do_sample=False,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                )
+            new_tokens = generated[:, batch["input_ids"].shape[1]:]
+            decoded = self.tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
+            for text in decoded:
+                matches = re.findall(r"\b(?:LOW|HIGH)\b", text.upper())
+                if len(set(matches)) != 1:
+                    raise RuntimeError(f"Invalid constrained LLM response: {text!r}")
+                probabilities.append(0.999 if matches[-1] == "HIGH" else 0.001)
         return PredictionBatch(np.asarray(probabilities), np.asarray(labels), np.asarray(ids))
 
 

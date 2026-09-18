@@ -8,7 +8,6 @@ The pilot asks whether a frozen language model and a frozen tabular foundation m
 - B: abundant anonymized statistics should favor the specialist.
 - C: both individual models should be weak, while a non-learned diagnostic that combines the semantically identified feature pair with an empirically estimated direction should recover the signal.
 
-Frozen models: `Qwen/Qwen3-0.6B` at commit `c1899de...` and `tabicl==2.2.0` using `tabicl-classifier-v2-20260212.ckpt`. The experiment is exploratory; its thresholds are frozen before the full Kaggle run.
+The v1 pilot used `Qwen/Qwen3-0.6B` and exposed a degenerate numeric-label evaluation. The preserved v2 exploratory protocol uses deterministic, strictly parsed `FINAL: LOW/HIGH` generation from `Qwen/Qwen2.5-1.5B-Instruct` at commit `989aa798...`, plus `tabicl==2.2.0` using `tabicl-classifier-v2-20260212.ckpt`. Thresholds are frozen before each full Kaggle run.
 
 Run local CPU-safe tests with `python -m pytest`. Kaggle bundles are produced by `scripts/build_kaggle_bundle.ps1` and validated before upload.
-

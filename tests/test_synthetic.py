@@ -1,6 +1,6 @@
 import numpy as np
 
-from crossfm.baselines import semantic_statistical_oracle
+from crossfm.baselines import build_llm_prompts, semantic_statistical_oracle
 from crossfm.synthetic import make_episode, make_episodes, split_hash
 
 
@@ -23,3 +23,14 @@ def test_c_oracle_recovers_complementary_signal():
     accuracy = np.mean((batch.probabilities >= 0.5) == batch.labels)
     assert accuracy > 0.80
 
+
+def test_a_oracle_uses_stable_semantic_feature():
+    episodes = make_episodes("A", 31, 100, n_query=16)
+    batch = semantic_statistical_oracle(episodes)
+    accuracy = np.mean((batch.probabilities >= 0.5) == batch.labels)
+    assert accuracy > 0.90
+    assert all(episode.x_context.shape == (6, 12) and episode.relevant == (2,) for episode in episodes)
+    assert all(np.all(np.abs(episode.x_query[:, 2]) >= 1.25) for episode in episodes)
+    prompt_query = build_llm_prompts(episodes[0])[0].split("Query: ", 1)[1]
+    assert episodes[0].feature_names[2] in prompt_query
+    assert episodes[0].feature_names[0] not in prompt_query
