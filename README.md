@@ -22,3 +22,5 @@ Phase 1 v2 passed all four preregistered gates on a private Kaggle T4x2 run. Pha
 - a three-specialist-call compute-matched one-way control.
 
 Phase 2 training, validation, and test use disjoint semantic aliases. Regime C additionally holds out the interaction family (difference during training, sum during validation, product during test). Both adapters together must remain below five million trainable parameters. Every Phase 2 result is explicitly exploratory and uses a new protocol ID.
+
+The completed v3 exploratory run validates 63/63 tasks. Its most important result is negative for the need for recurrent CrossFM on the current benchmark: the one-way language-to-specialist selector reaches 87.08% on held-out Regime C, versus 58.13% for TabICL, 52.08% for Qwen, and 56.88% for their tuned prediction ensemble. The three-call compute-matched variant is identical at 87.08%. This benchmark therefore does not justify a bidirectional recurrent model yet; the next scientific step is a harder C regime in which a single semantic feature-view choice is insufficient.
