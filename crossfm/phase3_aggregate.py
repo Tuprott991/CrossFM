@@ -81,6 +81,12 @@ def main() -> None:
     gates = config["gate"]
     checks = {
         "overfit_accuracy": min(worker["training"]["2"]["train_accuracy"] for worker in workers) >= float(gates["overfit_accuracy_min"]),
+        "overfit_near_response_ceiling": all(
+            worker["training"]["2"]["train_accuracy"]
+            >= worker["train_cache_diagnostics"]["relevant_view_accuracy"]
+            - float(gates["cache_ceiling_tolerance"])
+            for worker in workers
+        ),
         "nonzero_bridge_gradients": min(worker["training"]["2"]["max_gradient_norm"] for worker in workers) > 0.0,
         "training_messages_change_predictions": min(
             worker["training"]["2"]["train_zero_message_mean_absolute_delta"] for worker in workers

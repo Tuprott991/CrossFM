@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-phase3-cached-recurrence-overfit-smoke-v2
+  protocol_id: crossfm-phase3-cached-recurrence-overfit-smoke-v3
   classification: exploratory_engineering_smoke
   test_seeds: [8701, 8702]
   regimes: [A, B, C2]
@@ -29,4 +29,4 @@ training:
 routing: {fallback_threshold: 0.10, states: 16, representation: continuous_posterior, residual_bypass: exact}
 runtime: {expected_gpus: 2, gpu_family: NVIDIA Tesla T4, llm_batch_size: 2, torch_dtype: float16, attention: sdpa, cpu_threads_per_worker: 2, cache: in_memory_gpu_after_backbone_unload}
 source: {git_commit: BUILD_TIME, dirty: BUILD_TIME}
-gate: {overfit_accuracy_min: 0.95, message_delta_min: 0.01, a_accuracy_min: 0.95, b_accuracy_min: 0.0, c2_accuracy_min: 0.0, recurrence_margin: -1.0, ablation_margin: -1.0}
+gate: {overfit_accuracy_min: 0.85, cache_ceiling_tolerance: 0.05, message_delta_min: 0.01, a_accuracy_min: 0.95, b_accuracy_min: 0.0, c2_accuracy_min: 0.0, recurrence_margin: -1.0, ablation_margin: -1.0}

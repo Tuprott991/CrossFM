@@ -26,6 +26,8 @@ class CrossFMEpisodeCache:
     gate: float
     labels: np.ndarray
     relevant_view: int
+    route_view_prior: np.ndarray
+    routed: bool
 
 
 def _codebook_texts(ep: Episode, views: ViewEvidence) -> list[str]:
@@ -67,8 +69,12 @@ def build_crossfm_cache(
             if key not in codebook_cache:
                 codebook_cache[key] = llm.encode_texts(_codebook_texts(ep, item))
             route_message = posterior @ codebook_cache[key]
+            route_view_prior = np.zeros(len(item.descriptions), dtype=np.float64)
+            for code, probability in enumerate(posterior):
+                route_view_prior[ep.route_map[code]] += probability
         else:
             route_message = np.zeros_like(item.task_embedding)
+            route_view_prior = np.full(len(item.descriptions), 1.0 / len(item.descriptions), dtype=np.float64)
         result.append(CrossFMEpisodeCache(
             episode_id=ep.episode_id,
             regime=ep.regime,
@@ -85,6 +91,8 @@ def build_crossfm_cache(
             relevant_view=next(
                 (index for index, columns in enumerate(item.columns) if tuple(columns) == tuple(ep.relevant)), -1,
             ),
+            route_view_prior=route_view_prior.astype(np.float32),
+            routed=bool(ep.route_indices),
         ))
     return result
 
@@ -108,6 +116,8 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
     labels = np.zeros_like(llm)
     gates = np.zeros((count, 1), dtype=np.float32)
     relevant_views = np.zeros(count, dtype=np.int64)
+    route_view_prior = np.zeros((count, max_views), dtype=np.float32)
+    routed = np.zeros((count, 1), dtype=bool)
     for index, item in enumerate(items):
         if len(item.labels) != queries:
             raise ValueError("All packed episodes must have the same query count")
@@ -120,6 +130,8 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
             item.llm_probability, item.tfm_probability, item.labels, item.gate,
         )
         relevant_views[index] = item.relevant_view
+        route_view_prior[index, :width] = item.route_view_prior
+        routed[index] = item.routed
 
     def tensor(array, dtype=None):
         value = torch.from_numpy(np.ascontiguousarray(array))
@@ -131,6 +143,7 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
         "llm_probability": tensor(llm), "tfm_probability": tensor(tfm),
         "labels": tensor(labels), "gates": tensor(gates),
         "relevant_views": tensor(relevant_views),
+        "route_view_prior": tensor(route_view_prior), "routed": tensor(routed),
         "episode_ids": [item.episode_id for item in items],
     }
 
@@ -187,9 +200,12 @@ class CrossFMLatentLoop:
                 self.head_state = nn.Linear(embedding_dim, hidden_dim)
                 self.head_scalar = nn.Linear(2, hidden_dim)
                 self.head_out = nn.Linear(hidden_dim, 1)
+                nn.init.zeros_(self.head_out.weight)
+                nn.init.zeros_(self.head_out.bias)
 
             def forward(self, batch: dict, rounds: int, message_mode: str = "normal"):
                 task, route = batch["task"], batch["route"]
+                route_prior, routed = batch["route_view_prior"], batch["routed"]
                 views, probabilities, mask = (
                     batch["view_embeddings"], batch["view_probabilities"], batch["view_mask"],
                 )
@@ -198,6 +214,7 @@ class CrossFMLatentLoop:
                 state = task[:, None, :].expand(-1, query_count, -1)
                 if message_mode == "shuffle":
                     route = route.roll(1, dims=0)
+                    route_prior = route_prior.roll(1, dims=0)
                 selected_probability = batch["tfm_probability"]
                 weights = None
                 weighted_response = torch.zeros(
@@ -208,6 +225,8 @@ class CrossFMLatentLoop:
                     keys = self.view_key(views)
                     logits = torch.einsum("bqh,bvh->bqv", query, keys) / math.sqrt(keys.shape[-1])
                     logits = logits + self.view_bias(views).squeeze(-1)[:, None, :]
+                    if round_index > 0 and message_mode != "zero":
+                        logits = logits + torch.log(route_prior.clamp_min(1e-8))[:, None, :]
                     logits = logits.masked_fill(~mask[:, None, :], torch.finfo(logits.dtype).min)
                     weights = torch.softmax(logits, dim=-1)
                     selected_probability = torch.einsum("bqv,bqv->bq", weights, probabilities).clamp(1e-5, 1 - 1e-5)
@@ -228,10 +247,16 @@ class CrossFMLatentLoop:
                         weighted_response = torch.zeros_like(weighted_response)
                     state = self.state_norm(state + gates[:, None, :] * delta)
                 scalar_head = torch.stack((torch.logit(selected_probability), torch.logit(batch["tfm_probability"].clamp(1e-5, 1 - 1e-5))), dim=-1)
-                adapter_logit = self.head_out(torch.nn.functional.gelu(
+                correction = self.head_out(torch.nn.functional.gelu(
                     self.head_state(state) + self.head_scalar(scalar_head) + self.response_down(weighted_response)
                 )).squeeze(-1)
+                correction = correction * routed.expand_as(correction)
+                anchor = torch.where(routed.expand_as(selected_probability), selected_probability, batch["tfm_probability"])
+                adapter_logit = torch.logit(anchor.clamp(1e-5, 1 - 1e-5)) + correction
                 adapter_probability = torch.sigmoid(adapter_logit)
+                adapter_probability = torch.where(
+                    routed.expand_as(adapter_probability), adapter_probability, batch["tfm_probability"],
+                )
                 final_probability = (
                     (1.0 - gates) * batch["llm_probability"] + gates * adapter_probability
                 ).clamp(1e-5, 1 - 1e-5)

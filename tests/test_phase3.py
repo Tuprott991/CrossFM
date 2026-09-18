@@ -3,7 +3,9 @@ import numpy as np
 from crossfm.phase3 import CrossFMEpisodeCache, CrossFMLatentLoop, pack_cache
 
 
-def _item(name: str, gate: float, dimension: int = 12) -> CrossFMEpisodeCache:
+def _item(
+    name: str, gate: float, dimension: int = 12, *, routed: bool | None = None,
+) -> CrossFMEpisodeCache:
     rng = np.random.default_rng(abs(hash(name)) % (2**32))
     return CrossFMEpisodeCache(
         episode_id=name,
@@ -17,6 +19,8 @@ def _item(name: str, gate: float, dimension: int = 12) -> CrossFMEpisodeCache:
         gate=gate,
         labels=np.asarray([0, 0, 1, 1], dtype=np.float32),
         relevant_view=0,
+        route_view_prior=np.full(5, 0.2, dtype=np.float32),
+        routed=bool(gate) if routed is None else routed,
     )
 
 
@@ -25,6 +29,28 @@ def test_crossfm_residual_bypass_is_exact():
     model = CrossFMLatentLoop(12, 8, 2, "cpu", 7)
     probability, _ = model.module(packed, 2)
     assert np.array_equal(probability.detach().numpy()[0], packed["llm_probability"].numpy()[0])
+
+
+def test_crossfm_nonrouted_path_preserves_specialist_exactly():
+    packed = pack_cache([_item("b", 1.0, routed=False)], "cpu")
+    model = CrossFMLatentLoop(12, 8, 2, "cpu", 7)
+    probability, _ = model.module(packed, 2)
+    assert np.array_equal(probability.detach().numpy()[0], packed["tfm_probability"].numpy()[0])
+
+
+def test_soft_route_prior_only_changes_second_round_attention():
+    packed = pack_cache([_item("c", 1.0, routed=True)], "cpu")
+    model = CrossFMLatentLoop(12, 8, 2, "cpu", 13)
+    _, round1_uniform = model.module(packed, 1)
+    _, round2_uniform = model.module(packed, 2)
+    packed["route_view_prior"].zero_()
+    packed["route_view_prior"][0, :5] = packed["route_view_prior"].new_tensor(
+        [0.80, 0.05, 0.05, 0.05, 0.05],
+    )
+    _, round1_routed = model.module(packed, 1)
+    _, round2_routed = model.module(packed, 2)
+    assert np.array_equal(round1_uniform.detach().numpy(), round1_routed.detach().numpy())
+    assert not np.allclose(round2_uniform.detach().numpy(), round2_routed.detach().numpy())
 
 
 def test_crossfm_rounds_share_parameters_and_messages_affect_output():

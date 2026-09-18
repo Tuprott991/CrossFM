@@ -119,6 +119,7 @@ def main() -> None:
         for array in (
             item.task_embedding, item.view_embeddings, item.route_message,
             item.view_probabilities, item.llm_probability, item.tfm_probability, item.labels,
+            item.route_view_prior,
         )
     ))
     embedding_dim = len(train_cache[0].task_embedding)
