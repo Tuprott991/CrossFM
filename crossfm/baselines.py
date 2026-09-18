@@ -30,10 +30,20 @@ def semantic_statistical_oracle(episodes: Iterable[Episode]) -> PredictionBatch:
             score = 1.4 * ep.x_query[:, 0] * ep.x_query[:, 1] + 0.55 * ep.x_query[:, 2] - 0.25 * ep.x_query[:, 3]
         else:
             a, b = ep.relevant
-            context_diff = ep.x_context[:, b] - ep.x_context[:, a]
-            corr = np.corrcoef(context_diff, ep.y_context)[0, 1]
+            if ep.mechanism in {"pilot", "train"}:
+                context_signal = ep.x_context[:, b] - ep.x_context[:, a]
+                query_signal = ep.x_query[:, b] - ep.x_query[:, a]
+            elif ep.mechanism == "validation":
+                context_signal = ep.x_context[:, b] + ep.x_context[:, a]
+                query_signal = ep.x_query[:, b] + ep.x_query[:, a]
+            elif ep.mechanism == "test":
+                context_signal = ep.x_context[:, b] * ep.x_context[:, a]
+                query_signal = ep.x_query[:, b] * ep.x_query[:, a]
+            else:
+                raise ValueError(ep.mechanism)
+            corr = np.corrcoef(context_signal, ep.y_context)[0, 1]
             direction = 1.0 if np.nan_to_num(corr) >= 0 else -1.0
-            score = direction * (ep.x_query[:, b] - ep.x_query[:, a])
+            score = direction * query_signal
         probs.extend((1.0 / (1.0 + np.exp(-2.0 * score))).tolist())
         labels.extend(ep.y_query.tolist())
         ids.extend([ep.episode_id] * len(ep.y_query))
@@ -83,6 +93,8 @@ class QwenBinaryBaseline:
         self.model = AutoModelForCausalLM.from_pretrained(
             model_id, revision=revision, torch_dtype=torch.float16, attn_implementation="sdpa"
         ).to(device).eval()
+        for parameter in self.model.parameters():
+            parameter.requires_grad_(False)
         self.device = device
 
     def hidden_state_preflight(self) -> tuple[int, ...]:
@@ -100,6 +112,10 @@ class QwenBinaryBaseline:
             prompts.extend(raw)
             labels.extend(ep.y_query.tolist())
             ids.extend([ep.episode_id] * len(ep.y_query))
+        probabilities = self.predict_prompts(prompts)
+        return PredictionBatch(np.asarray(probabilities), np.asarray(labels), np.asarray(ids))
+
+    def predict_prompts(self, prompts: list[str]) -> np.ndarray:
         probabilities = []
         for start in range(0, len(prompts), self.batch_size):
             rendered = [
@@ -123,11 +139,26 @@ class QwenBinaryBaseline:
                 if len(set(matches)) != 1:
                     raise RuntimeError(f"Invalid constrained LLM response: {text!r}")
                 probabilities.append(0.999 if matches[-1] == "HIGH" else 0.001)
-        return PredictionBatch(np.asarray(probabilities), np.asarray(labels), np.asarray(ids))
+        return np.asarray(probabilities)
+
+    def encode_texts(self, texts: list[str], max_length: int = 160) -> np.ndarray:
+        """Mean-pool frozen final hidden states for lightweight adapters."""
+        encoded: list[np.ndarray] = []
+        for start in range(0, len(texts), self.batch_size):
+            batch = self.tokenizer(
+                texts[start:start + self.batch_size], padding=True, truncation=True,
+                max_length=max_length, return_tensors="pt",
+            ).to(self.device)
+            with self.torch.inference_mode():
+                hidden = self.model(**batch, output_hidden_states=True, use_cache=False).hidden_states[-1]
+                mask = batch["attention_mask"].unsqueeze(-1)
+                pooled = (hidden.float() * mask).sum(1) / mask.sum(1).clamp_min(1)
+            encoded.append(pooled.cpu().numpy())
+        return np.concatenate(encoded, axis=0)
 
 
 class TabICLBaseline:
-    def __init__(self, repo_id: str, revision: str, checkpoint: str, device: str = "cuda:0"):
+    def __init__(self, repo_id: str, revision: str, checkpoint: str, device: str = "cuda:0", n_estimators: int = 4):
         from huggingface_hub import hf_hub_download
         from tabicl import TabICLClassifier
 
@@ -139,7 +170,7 @@ class TabICLBaseline:
             device=device,
             use_amp=True,
             use_fa3=False,
-            n_estimators=4,
+            n_estimators=n_estimators,
             verbose=False,
         )
 
@@ -161,3 +192,31 @@ class TabICLBaseline:
             labels.extend(ep.y_query.tolist())
             ids.extend([ep.episode_id] * len(ep.y_query))
         return PredictionBatch(np.asarray(probs), np.asarray(labels), np.asarray(ids))
+
+    def predict_episode_with_evidence(self, ep: Episode) -> tuple[np.ndarray, np.ndarray]:
+        """Return probabilities and frozen 512-d TabICL ICL states.
+
+        The hook is placed after the final ICL layer normalization and before
+        TabICL's decoder.  Ensemble representations are class-shuffle invariant
+        and are averaged across estimators.  No specialist parameter is trained.
+        """
+        import torch
+
+        captured: list[np.ndarray] = []
+
+        def capture(_module, _inputs, output):
+            if torch.is_tensor(output):
+                captured.append(output.detach().float().cpu().numpy()[:, -len(ep.x_query):, :])
+
+        self.classifier.fit(ep.x_context, ep.y_context)
+        handle = self.classifier.model_.icl_predictor.ln.register_forward_hook(capture)
+        try:
+            probability = self.classifier.predict_proba(ep.x_query)[:, 1]
+        finally:
+            handle.remove()
+        if not captured:
+            raise RuntimeError("TabICL evidence hook captured no ICL states")
+        evidence = np.concatenate(captured, axis=0).mean(axis=0)
+        if evidence.shape[0] != len(ep.x_query) or not np.isfinite(evidence).all():
+            raise RuntimeError(f"Invalid TabICL evidence shape {evidence.shape}")
+        return probability, evidence

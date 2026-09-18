@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2')]
+    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2','phase2_smoke','phase2')]
     [string]$Profile = 'smoke',
     [string]$KernelSlug = 'crossfm-phase-1-smoke-t4x2',
     [string]$KernelTitle = 'CrossFM Phase 1 Smoke T4x2'
@@ -10,7 +10,9 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
     [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$distRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist\kaggle'))
+$isPhase2 = $Profile.StartsWith('phase2')
+$stagingName = if ($isPhase2) { 'dist\kaggle_phase2' } else { 'dist\kaggle' }
+$distRoot = [System.IO.Path]::GetFullPath((Join-Path $repo $stagingName))
 $expectedRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist'))
 if (-not $distRoot.StartsWith($expectedRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Unsafe staging path: $distRoot"
@@ -55,13 +57,14 @@ $manifest = [ordered]@{
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'bundle_manifest.json') ($manifest | ConvertTo-Json -Depth 5)
 
 $datasetMetadata = [ordered]@{
-    title = 'CrossFM Phase 1 Immutable Bundle'
-    id = 'tuktuai/crossfm-phase1-bundle'
+    title = if ($isPhase2) { 'CrossFM Phase 2 Immutable Bundle' } else { 'CrossFM Phase 1 Immutable Bundle' }
+    id = if ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }
     licenses = @([ordered]@{ name = 'other' })
     isPrivate = $true
 }
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'dataset-metadata.json') ($datasetMetadata | ConvertTo-Json -Depth 4)
-Copy-Item -LiteralPath (Join-Path $repo 'scripts\kaggle_driver.py') -Destination (Join-Path $kernelDir.FullName 'driver.py')
+$driverName = if ($isPhase2) { 'kaggle_phase2_driver.py' } else { 'kaggle_driver.py' }
+Copy-Item -LiteralPath (Join-Path $repo "scripts\$driverName") -Destination (Join-Path $kernelDir.FullName 'driver.py')
 $kernelMetadata = [ordered]@{
     id = "tuktuai/$KernelSlug"
     title = $KernelTitle
@@ -72,12 +75,14 @@ $kernelMetadata = [ordered]@{
     enable_gpu = $true
     enable_internet = $true
     machine_shape = 'NvidiaTeslaT4'
-    dataset_sources = @('tuktuai/crossfm-phase1-bundle')
+    dataset_sources = @($(if ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }))
     competition_sources = @()
     kernel_sources = @()
     model_sources = @()
 }
 Write-Utf8NoBom (Join-Path $kernelDir.FullName 'kernel-metadata.json') ($kernelMetadata | ConvertTo-Json -Depth 4)
+python (Join-Path $repo 'scripts\validate_kaggle_bundle.py') $distRoot
+if ($LASTEXITCODE -ne 0) { throw 'Kaggle bundle validation failed' }
 Write-Output "Built $Profile bundle at $distRoot"
 Write-Output "wheel_sha256=$wheelHash"
 Write-Output "config_sha256=$configHash"

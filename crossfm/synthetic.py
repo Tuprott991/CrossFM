@@ -28,10 +28,11 @@ class Episode:
     x_query: np.ndarray
     y_query: np.ndarray
     relevant: tuple[int, ...]
+    mechanism: str = "pilot"
 
     def checksum(self) -> str:
         h = hashlib.sha256()
-        for value in (self.episode_id, self.regime, *self.feature_names, self.description):
+        for value in (self.episode_id, self.regime, self.mechanism, *self.feature_names, self.description):
             h.update(value.encode("utf-8"))
         for array in (self.x_context, self.y_context, self.x_query, self.y_query):
             h.update(np.ascontiguousarray(array).tobytes())
@@ -50,15 +51,33 @@ def _labels_from_context_threshold(score: np.ndarray, noise: np.ndarray, n_conte
     return (latent > threshold).astype(np.int64)
 
 
-def _semantic_names(rng: np.random.Generator) -> tuple[str, ...]:
-    return tuple(rng.choice(ALIASES[key]) for key in ("income", "premium", "late", "claims", "tenure", "age"))
+def _semantic_names(rng: np.random.Generator, alias_split: str = "mixed") -> tuple[str, ...]:
+    """Select aliases from a declared, non-overlapping split.
+
+    ``mixed`` preserves the Phase-1 protocol.  Phase 2 uses index 0 for
+    training, 1 for validation and 2 for test so that learned adapters cannot
+    memorize the surface form of a feature name.
+    """
+    if alias_split == "mixed":
+        return tuple(rng.choice(ALIASES[key]) for key in ("income", "premium", "late", "claims", "tenure", "age"))
+    index = {"train": 0, "validation": 1, "test": 2}.get(alias_split)
+    if index is None:
+        raise ValueError(f"Unknown alias split: {alias_split}")
+    return tuple(ALIASES[key][index] for key in ("income", "premium", "late", "claims", "tenure", "age"))
 
 
-def make_episode(regime: str, seed: int, index: int, n_query: int = 8) -> Episode:
+def make_episode(
+    regime: str,
+    seed: int,
+    index: int,
+    n_query: int = 8,
+    alias_split: str = "mixed",
+    mechanism_split: str = "pilot",
+) -> Episode:
     rng = _rng(seed, regime, index)
     if regime == "A":
         n_context, p = 6, 12
-        names = _semantic_names(rng) + tuple(f"portfolio_proxy_{i + 1}" for i in range(p - 6))
+        names = _semantic_names(rng, alias_split) + tuple(f"portfolio_proxy_{i + 1}" for i in range(p - 6))
         # Every column is a near-perfect context shortcut. Only the semantically
         # named late-payment feature remains coupled to risk at query time.
         context_risk = np.concatenate([
@@ -98,26 +117,50 @@ def make_episode(regime: str, seed: int, index: int, n_query: int = 8) -> Episod
     elif regime == "C":
         n_context, pairs = 28, 6
         p = pairs * 2
-        semantic = list(_semantic_names(rng)[:2])
+        semantic = list(_semantic_names(rng, alias_split)[:2])
         names = tuple(semantic + [f"auxiliary_{i + 1}" for i in range(p - 2)])
         sign = int(rng.choice([-1, 1]))
-        d_context = rng.normal(size=n_context)
-        d_query = rng.normal(size=n_query)
-        context_diffs = [d_context]
-        query_diffs = [d_query]
+        stable_context = rng.normal(size=n_context)
+        stable_query = rng.normal(size=n_query)
+        context_signals = [stable_context]
+        query_signals = [stable_query]
         for _ in range(1, pairs):
-            context_diffs.append(0.94 * d_context + np.sqrt(1 - 0.94**2) * rng.normal(size=n_context))
-            query_diffs.append(rng.normal(size=n_query))
-        def paired_matrix(diffs: list[np.ndarray]) -> np.ndarray:
+            context_signals.append(0.94 * stable_context + np.sqrt(1 - 0.94**2) * rng.normal(size=n_context))
+            query_signals.append(rng.normal(size=n_query))
+
+        mechanism = "difference" if mechanism_split in {"pilot", "train"} else mechanism_split
+
+        def paired_matrix(signals: list[np.ndarray]) -> np.ndarray:
             cols: list[np.ndarray] = []
-            for diff in diffs:
-                center = rng.normal(0, 0.7, size=len(diff))
-                cols.extend([center - diff / 2, center + diff / 2])
+            for signal in signals:
+                if mechanism == "difference":
+                    center = rng.normal(0, 0.7, size=len(signal))
+                    cols.extend([center - signal / 2, center + signal / 2])
+                elif mechanism == "validation":
+                    delta = rng.normal(0, 0.7, size=len(signal))
+                    cols.extend([signal / 2 - delta, signal / 2 + delta])
+                elif mechanism == "test":
+                    first = rng.choice([-1.0, 1.0], size=len(signal)) * rng.uniform(0.65, 1.35, size=len(signal))
+                    cols.extend([first, signal / first])
+                else:
+                    raise ValueError(f"Unknown mechanism split: {mechanism_split}")
             return np.column_stack(cols).astype(np.float32)
-        xc = paired_matrix(context_diffs)
-        xq = paired_matrix(query_diffs)
-        sc = sign * (xc[:, 1] - xc[:, 0])
-        sq = sign * (xq[:, 1] - xq[:, 0])
+        xc = paired_matrix(context_signals)
+        xq = paired_matrix(query_signals)
+        # Phase 2 deliberately holds out the functional form of the stable
+        # semantic pair.  Metadata identifies the pair, but only the context
+        # identifies its transformation and episode-specific direction.
+        if mechanism_split in {"pilot", "train"}:
+            sc = sign * stable_context
+            sq = sign * stable_query
+        elif mechanism_split == "validation":
+            sc = sign * stable_context
+            sq = sign * stable_query
+        elif mechanism_split == "test":
+            sc = sign * stable_context
+            sq = sign * stable_query
+        else:
+            raise ValueError(f"Unknown mechanism split: {mechanism_split}")
         yc = _labels_from_context_threshold(sc, rng.normal(0, 0.25, n_context), n_context)
         # Use the context threshold (approximately zero) rather than leaking query rank.
         yq = (sq + rng.normal(0, 0.25, n_query) > 0).astype(np.int64)
@@ -132,7 +175,11 @@ def make_episode(regime: str, seed: int, index: int, n_query: int = 8) -> Episod
     else:
         raise ValueError(f"Unknown regime: {regime}")
     return Episode(
-        episode_id=f"{regime}-s{seed}-e{index:04d}",
+        episode_id=(
+            f"{regime}-s{seed}-e{index:04d}"
+            if alias_split == "mixed" and mechanism_split == "pilot"
+            else f"{regime}-{alias_split}-{mechanism_split}-s{seed}-e{index:04d}"
+        ),
         regime=regime,
         feature_names=names,
         description=desc,
@@ -141,11 +188,25 @@ def make_episode(regime: str, seed: int, index: int, n_query: int = 8) -> Episod
         x_query=x[n_context:],
         y_query=y[n_context:],
         relevant=relevant,
+        mechanism=mechanism_split,
     )
 
 
-def make_episodes(regime: str, seed: int, count: int, n_query: int = 8) -> list[Episode]:
-    return [make_episode(regime, seed, i, n_query=n_query) for i in range(count)]
+def make_episodes(
+    regime: str,
+    seed: int,
+    count: int,
+    n_query: int = 8,
+    alias_split: str = "mixed",
+    mechanism_split: str = "pilot",
+) -> list[Episode]:
+    return [
+        make_episode(
+            regime, seed, i, n_query=n_query,
+            alias_split=alias_split, mechanism_split=mechanism_split,
+        )
+        for i in range(count)
+    ]
 
 
 def split_hash(episodes: list[Episode]) -> str:
