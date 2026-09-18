@@ -114,7 +114,10 @@ def build_llm_prompts(ep: Episode, max_context_rows: int = 48) -> list[str]:
 
 
 class QwenBinaryBaseline:
-    def __init__(self, model_id: str, revision: str, device: str = "cuda:0", batch_size: int = 8):
+    def __init__(
+        self, model_id: str, revision: str, device: str = "cuda:0", batch_size: int = 8,
+        torch_dtype: str = "float16",
+    ):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -124,8 +127,13 @@ class QwenBinaryBaseline:
         self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16}.get(torch_dtype)
+        if dtype is None:
+            raise ValueError(f"Unsupported Qwen dtype: {torch_dtype}")
+        if dtype is torch.bfloat16 and device.startswith("cuda") and not torch.cuda.is_bf16_supported():
+            raise RuntimeError("bfloat16 was requested but is not supported by this CUDA device")
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_id, revision=revision, torch_dtype=torch.float16, attn_implementation="sdpa"
+            model_id, revision=revision, torch_dtype=dtype, attn_implementation="sdpa"
         ).to(device).eval()
         for parameter in self.model.parameters():
             parameter.requires_grad_(False)

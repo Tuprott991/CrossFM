@@ -12,12 +12,12 @@ import sys
 import traceback
 
 
-INPUT_CANDIDATES = (
+INPUT_CANDIDATES = ((Path(os.environ["CROSSFM_BUNDLE"]),) if os.environ.get("CROSSFM_BUNDLE") else (
     Path("/kaggle/input/crossfm-phase3-bundle"),
     Path("/kaggle/input/datasets/tuktuai/crossfm-phase3-bundle"),
-)
+))
 INPUT = INPUT_CANDIDATES[0]
-WORKING = Path("/kaggle/working")
+WORKING = Path(os.environ.get("CROSSFM_WORKING", "/kaggle/working"))
 TOP_SUMMARY = WORKING / "crossfm_phase3_summary.json"
 
 
@@ -70,9 +70,13 @@ def main() -> None:
     for index in range(torch.cuda.device_count()):
         properties = torch.cuda.get_device_properties(index)
         gpu_info.append({"index": index, "name": properties.name, "memory_bytes": properties.total_memory})
-    if len(gpu_info) != 2 or any("T4" not in gpu["name"] for gpu in gpu_info):
-        raise RuntimeError(f"Expected exactly two T4 GPUs, found {gpu_info}")
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    expected_count = int(cfg["runtime"]["expected_gpus"])
+    expected_family = str(cfg["runtime"]["gpu_family"])
+    if len(gpu_info) != expected_count or any(expected_family not in gpu["name"] for gpu in gpu_info):
+        raise RuntimeError(f"Expected {expected_count} x {expected_family}, found {gpu_info}")
+    if cfg["runtime"].get("torch_dtype") == "bfloat16" and not torch.cuda.is_bf16_supported():
+        raise RuntimeError("Frozen protocol requires bfloat16, but CUDA reports it unsupported")
     snapshot_download(repo_id=cfg["models"]["llm"]["id"], revision=cfg["models"]["llm"]["revision"])
     hf_hub_download(
         repo_id=cfg["models"]["specialist"]["id"], revision=cfg["models"]["specialist"]["revision"],
@@ -86,17 +90,21 @@ def main() -> None:
         "torch": torch.__version__, "cuda": torch.version.cuda, "disk_free_bytes": shutil.disk_usage(WORKING).free,
         "wheel_sha256": manifest["wheel"]["sha256"], "config_sha256": manifest["config"]["sha256"],
         "execution": "two isolated workers; episode-sharded test caches; in-memory frozen-state cache",
+        "torch_dtype": cfg["runtime"].get("torch_dtype"),
     }
     atomic_json(run_dir / "doctor.json", doctor)
     processes, handles = [], []
     try:
         for rank in range(2):
             environment = os.environ.copy()
+            cpu_threads = str(cfg["runtime"].get("cpu_threads_per_worker", 2))
             environment.update({
                 "CUDA_VISIBLE_DEVICES": str(rank), "RANK": str(rank), "WORLD_SIZE": "2", "LOCAL_RANK": "0",
-                "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2", "TOKENIZERS_PARALLELISM": "false",
+                "OMP_NUM_THREADS": cpu_threads, "MKL_NUM_THREADS": cpu_threads,
+                "OPENBLAS_NUM_THREADS": cpu_threads, "NUMEXPR_NUM_THREADS": cpu_threads,
+                "TOKENIZERS_PARALLELISM": "false", "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
                 "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,max_split_size_mb:128",
-                "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+                "HF_HUB_DISABLE_PROGRESS_BARS": "1", "HF_XET_HIGH_PERFORMANCE": "1",
             })
             handle = (logs / f"worker_{rank}.log").open("w", encoding="utf-8")
             handles.append(handle)

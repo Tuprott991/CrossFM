@@ -89,6 +89,7 @@ def main() -> None:
     llm_cfg, tfm_cfg = config["models"]["llm"], config["models"]["specialist"]
     llm = QwenBinaryBaseline(
         llm_cfg["id"], llm_cfg["revision"], batch_size=int(config["runtime"]["llm_batch_size"]),
+        torch_dtype=str(config["runtime"].get("torch_dtype", "float16")),
     )
     llm.hidden_state_preflight()
     tfm = TabICLBaseline(tfm_cfg["id"], tfm_cfg["revision"], tfm_cfg["checkpoint"])

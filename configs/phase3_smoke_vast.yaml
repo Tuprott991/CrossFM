@@ -1,0 +1,32 @@
+experiment:
+  protocol_id: crossfm-phase3-cached-recurrence-overfit-smoke-v3-vast-bf16
+  classification: exploratory_engineering_hardware_replication
+  test_seeds: [8701, 8702]
+  regimes: [A, B, C2]
+  methods: [crossfm_1, crossfm_r2, crossfm_r2_zero, crossfm_r2_shuffle]
+data:
+  train: {seed: 8101, episodes: {A: 0, B: 0, C2: 100}, queries_per_episode: 8, alias_split: train, mechanism_split: train}
+  validation: {seed: 8201, episodes: {A: 0, B: 0, C2: 12}, queries_per_episode: 8, alias_split: validation, mechanism_split: validation}
+  test: {episodes: {A: 2, B: 2, C2: 2}, queries_per_episode: 8, alias_split: test, mechanism_split: test}
+models:
+  llm: {id: Qwen/Qwen2.5-1.5B-Instruct, revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306, dtype: bfloat16}
+  specialist:
+    id: jingang/TabICL
+    package: tabicl==2.2.0
+    revision: 4dcd344ece2c00be9e831fdd35bed57b5ad83e19
+    source_revision: 0dbff3ec8fc68c123c87af77b0ea8b25cd2d23f3
+    checkpoint: tabicl-classifier-v2-20260212.ckpt
+training:
+  seed: 9101
+  max_trainable_params: 5000000
+  hidden_dim: 256
+  max_rounds: 2
+  epochs: 300
+  patience: 300
+  checkpoint_metric: train
+  episode_batch_size: 8
+  learning_rate: 0.001
+routing: {fallback_threshold: 0.10, states: 16, representation: continuous_posterior, residual_bypass: exact}
+runtime: {expected_gpus: 2, gpu_family: NVIDIA GeForce RTX 5090, llm_batch_size: 16, torch_dtype: bfloat16, attention: sdpa, cpu_threads_per_worker: 8, cache: in_memory_gpu_after_backbone_unload}
+source: {git_commit: BUILD_TIME, dirty: BUILD_TIME}
+gate: {overfit_accuracy_min: 0.85, cache_ceiling_tolerance: 0.05, message_delta_min: 0.01, a_accuracy_min: 0.95, b_accuracy_min: 0.0, c2_accuracy_min: 0.0, recurrence_margin: -1.0, ablation_margin: -1.0}
