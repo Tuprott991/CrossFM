@@ -74,7 +74,13 @@ def main() -> None:
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
     expected_count = int(cfg["runtime"]["expected_gpus"])
     expected_family = str(cfg["runtime"]["gpu_family"])
-    if len(gpu_info) != expected_count or any(expected_family not in gpu["name"] for gpu in gpu_info):
+    normalize_gpu_name = lambda name: " ".join(
+        token for token in name.lower().split() if token not in {"nvidia", "corporation"}
+    )
+    expected_gpu_name = normalize_gpu_name(expected_family)
+    if len(gpu_info) != expected_count or any(
+        expected_gpu_name not in normalize_gpu_name(gpu["name"]) for gpu in gpu_info
+    ):
         raise RuntimeError(f"Expected {expected_count} x {expected_family}, found {gpu_info}")
     if cfg["runtime"].get("torch_dtype") == "bfloat16" and not torch.cuda.is_bf16_supported():
         raise RuntimeError("Frozen protocol requires bfloat16, but CUDA reports it unsupported")

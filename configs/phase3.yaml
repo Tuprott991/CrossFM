@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-phase3-cached-recurrence-exploratory-v3
+  protocol_id: crossfm-phase3-cached-recurrence-exploratory-v4-hardware-name-fix
   classification: exploratory_non_confirmatory
   test_seeds: [4701, 4702, 4703]
   regimes: [A, B, C2]
