@@ -112,8 +112,52 @@ class QwenBinaryBaseline:
             prompts.extend(raw)
             labels.extend(ep.y_query.tolist())
             ids.extend([ep.episode_id] * len(ep.y_query))
-        probabilities = self.predict_prompts(prompts)
+        probabilities = self.predict_prompts_likelihood(prompts)
         return PredictionBatch(np.asarray(probabilities), np.asarray(labels), np.asarray(ids))
+
+    def predict_prompts_likelihood(self, prompts: list[str]) -> np.ndarray:
+        """Score complete LOW/HIGH verbalizers without free-form parsing.
+
+        This evaluates the joint token likelihood of each exact candidate
+        sequence.  It cannot fail because the model chose to begin an
+        explanation, and it does not approximate a multi-token label with only
+        its first token.
+        """
+        candidate_texts = ("FINAL: LOW", "FINAL: HIGH")
+        candidate_ids = [
+            self.tokenizer(text, add_special_tokens=False)["input_ids"]
+            for text in candidate_texts
+        ]
+        scored: list[tuple[int, int, list[int], int]] = []
+        for prompt_index, prompt in enumerate(prompts):
+            rendered = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}], tokenize=False,
+                add_generation_prompt=True,
+            )
+            prompt_ids = self.tokenizer(rendered, add_special_tokens=False)["input_ids"]
+            for candidate_index, suffix in enumerate(candidate_ids):
+                scored.append((prompt_index, candidate_index, prompt_ids + suffix, len(suffix)))
+        scores = np.empty((len(prompts), 2), dtype=np.float64)
+        for start in range(0, len(scored), self.batch_size * 2):
+            group = scored[start:start + self.batch_size * 2]
+            batch = self.tokenizer.pad(
+                {"input_ids": [item[2] for item in group]}, padding=True, return_tensors="pt",
+            ).to(self.device)
+            with self.torch.inference_mode():
+                logits = self.model(**batch, use_cache=False).logits.float()
+                log_probs = self.torch.log_softmax(logits, dim=-1)
+            sequence_length = batch["input_ids"].shape[1]
+            for row, (prompt_index, candidate_index, _ids, suffix_length) in enumerate(group):
+                token_positions = self.torch.arange(
+                    sequence_length - suffix_length - 1, sequence_length - 1, device=self.device,
+                )
+                target_tokens = batch["input_ids"][row, -suffix_length:]
+                scores[prompt_index, candidate_index] = float(
+                    log_probs[row, token_positions, target_tokens].sum().cpu()
+                )
+        normalized = scores - scores.max(axis=1, keepdims=True)
+        exp_scores = np.exp(normalized)
+        return exp_scores[:, 1] / exp_scores.sum(axis=1)
 
     def predict_prompts(self, prompts: list[str]) -> np.ndarray:
         probabilities = []

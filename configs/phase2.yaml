@@ -1,10 +1,10 @@
 experiment:
-  protocol_id: crossfm-phase2-baselines-exploratory-v1-heldout
+  protocol_id: crossfm-phase2-baselines-exploratory-v2-sequence-likelihood
   classification: exploratory_non_confirmatory
   test_seeds: [2701, 2702, 2703]
   regimes: [A, B, C]
   methods: [llm_only, tabicl_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, textual_tool, llm_to_tfm_compute_matched]
-  llm_evaluation: deterministic_generation_strict_final_low_high
+  llm_evaluation: exact_sequence_level_label_likelihood_final_low_vs_high
 data:
   train: {seed: 2101, episodes_per_regime: 12, queries_per_episode: 8, alias_split: train, mechanism_split: train}
   validation: {seed: 2301, episodes_per_regime: 6, queries_per_episode: 8, alias_split: validation, mechanism_split: validation}

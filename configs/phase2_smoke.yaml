@@ -1,10 +1,10 @@
 experiment:
-  protocol_id: crossfm-phase2-engineering-smoke-v1
+  protocol_id: crossfm-phase2-engineering-smoke-v2-sequence-likelihood
   classification: exploratory_engineering_smoke
   test_seeds: [3701, 3702]
   regimes: [A, B, C]
   methods: [llm_only, tabicl_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, textual_tool, llm_to_tfm_compute_matched]
-  llm_evaluation: deterministic_generation_strict_final_low_high
+  llm_evaluation: exact_sequence_level_label_likelihood_final_low_vs_high
 data:
   train: {seed: 3101, episodes_per_regime: 1, queries_per_episode: 2, alias_split: train, mechanism_split: train}
   validation: {seed: 3201, episodes_per_regime: 1, queries_per_episode: 2, alias_split: validation, mechanism_split: validation}

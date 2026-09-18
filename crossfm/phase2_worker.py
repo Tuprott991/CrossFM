@@ -168,7 +168,7 @@ def main() -> None:
             if not np.array_equal(labels, t2l_labels) or not np.array_equal(ids, t2l_ids):
                 raise RuntimeError("T->L prediction alignment failure")
             textual_probability = np.concatenate([
-                llm.predict_prompts(tool_prompts(ep, test_specialist[ep.episode_id].probability))
+                llm.predict_prompts_likelihood(tool_prompts(ep, test_specialist[ep.episode_id].probability))
                 for ep in regime_episodes
             ])
 
