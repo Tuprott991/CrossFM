@@ -55,7 +55,7 @@ $manifest = [ordered]@{
     source_dirty = $false
     wheel = [ordered]@{ name = [System.IO.Path]::GetFileName($wheelTarget); sha256 = $wheelHash; bytes = (Get-Item $wheelTarget).Length }
     config = [ordered]@{ name = 'frozen_experiment.yaml'; sha256 = $configHash; bytes = (Get-Item $configTarget).Length }
-    dependencies = @('tabicl==2.2.0','transformers==4.57.6','huggingface-hub==0.36.0','safetensors==0.7.0')
+    dependencies = @('numpy==1.26.4','pandas==2.2.3','PyYAML==6.0.2','scikit-learn==1.6.1','tabicl==2.2.0','transformers==4.57.6','huggingface-hub==0.36.0','safetensors==0.7.0')
 }
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'bundle_manifest.json') ($manifest | ConvertTo-Json -Depth 5)
 

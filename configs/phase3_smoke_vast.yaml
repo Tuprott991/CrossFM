@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-phase3-cached-recurrence-overfit-smoke-v3-vast-bf16
+  protocol_id: crossfm-phase3-cached-recurrence-overfit-smoke-v3-vast-bf16-r2
   classification: exploratory_engineering_hardware_replication
   test_seeds: [8701, 8702]
   regimes: [A, B, C2]

@@ -58,6 +58,7 @@ def main() -> None:
     config = checked_file(manifest["config"]["name"], manifest["config"]["sha256"])
     run_checked([
         sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+        "numpy==1.26.4", "pandas==2.2.3", "PyYAML==6.0.2", "scikit-learn==1.6.1",
         "tabicl==2.2.0", "transformers==4.57.6", "huggingface-hub==0.36.0", "safetensors==0.7.0",
     ])
     run_checked([sys.executable, "-m", "pip", "install", "--quiet", "--no-deps", str(wheel)])
