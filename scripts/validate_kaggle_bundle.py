@@ -68,6 +68,18 @@ def main() -> None:
         )
         assert episode_queries < 100_000
         assert int(config["training"]["max_trainable_params"]) <= 5_000_000
+    if config["experiment"]["protocol_id"].startswith("crossfm-phase3"):
+        assert config["experiment"]["classification"].startswith("exploratory")
+        assert set(config["experiment"]["methods"]) == {
+            "crossfm_1", "crossfm_r2", "crossfm_r2_zero", "crossfm_r2_shuffle",
+        }
+        assert config["routing"] == {
+            "fallback_threshold": 0.10, "states": 16,
+            "representation": "continuous_posterior", "residual_bypass": "exact",
+        }
+        assert int(config["training"]["max_trainable_params"]) <= 5_000_000
+        assert int(config["training"]["max_rounds"]) == 2
+        assert config["runtime"]["cache"] == "in_memory_gpu_after_backbone_unload"
     assert (kernel / kernel_metadata["code_file"]).is_file()
     print(json.dumps({
         "status": "valid", "bundle": str(root), "protocol_id": config["experiment"]["protocol_id"],
