@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2','phase2_smoke','phase2','phase25_smoke','phase25','phase275_smoke','phase275','phase3_smoke','phase3_smoke_vast','phase3')]
+    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2','phase2_smoke','phase2','phase25_smoke','phase25','phase275_smoke','phase275','phase3_smoke','phase3_smoke_vast','phase3_dynamic_smoke_vast','phase3')]
     [string]$Profile = 'smoke',
     [string]$KernelSlug = 'crossfm-phase-1-smoke-t4x2',
     [string]$KernelTitle = 'CrossFM Phase 1 Smoke T4x2'
@@ -14,7 +14,7 @@ $isPhase2 = $Profile.StartsWith('phase2')
 $isPhase25 = $Profile.StartsWith('phase25')
 $isPhase275 = $Profile.StartsWith('phase275')
 $isPhase3 = $Profile.StartsWith('phase3')
-$stagingName = if ($Profile -eq 'phase3_smoke_vast') { 'dist\vast_phase3' } elseif ($isPhase3) { 'dist\kaggle_phase3' } elseif ($isPhase275) { 'dist\kaggle_phase275' } elseif ($isPhase25) { 'dist\kaggle_phase25' } elseif ($isPhase2) { 'dist\kaggle_phase2' } else { 'dist\kaggle' }
+$stagingName = if ($Profile -eq 'phase3_dynamic_smoke_vast') { 'dist\vast_phase3_dynamic' } elseif ($Profile -eq 'phase3_smoke_vast') { 'dist\vast_phase3' } elseif ($isPhase3) { 'dist\kaggle_phase3' } elseif ($isPhase275) { 'dist\kaggle_phase275' } elseif ($isPhase25) { 'dist\kaggle_phase25' } elseif ($isPhase2) { 'dist\kaggle_phase2' } else { 'dist\kaggle' }
 $distRoot = [System.IO.Path]::GetFullPath((Join-Path $repo $stagingName))
 $expectedRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist'))
 if (-not $distRoot.StartsWith($expectedRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -66,7 +66,7 @@ $datasetMetadata = [ordered]@{
     isPrivate = $true
 }
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'dataset-metadata.json') ($datasetMetadata | ConvertTo-Json -Depth 4)
-$driverName = if ($isPhase3) { 'kaggle_phase3_driver.py' } elseif ($isPhase2) { 'kaggle_phase2_driver.py' } else { 'kaggle_driver.py' }
+$driverName = if ($Profile -eq 'phase3_dynamic_smoke_vast') { 'vast_phase3_dynamic_driver.py' } elseif ($isPhase3) { 'kaggle_phase3_driver.py' } elseif ($isPhase2) { 'kaggle_phase2_driver.py' } else { 'kaggle_driver.py' }
 Copy-Item -LiteralPath (Join-Path $repo "scripts\$driverName") -Destination (Join-Path $kernelDir.FullName 'driver.py')
 $kernelMetadata = [ordered]@{
     id = "tuktuai/$KernelSlug"

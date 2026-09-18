@@ -1,0 +1,33 @@
+experiment:
+  protocol_id: crossfm-phase3-dynamic-transfer-smoke-v1-vast-bf16
+  classification: exploratory_dynamic_transfer_smoke
+  test_seeds: [8701, 8702]
+  regimes: [A, B, C2]
+  methods: [dynamic_1, dynamic_r2, dynamic_r2_zero, dynamic_r2_shuffle]
+data:
+  train: {seed: 8101, episodes: {A: 0, B: 0, C2: 40}, queries_per_episode: 8, alias_split: train, mechanism_split: train}
+  test: {episodes: {A: 2, B: 2, C2: 4}, queries_per_episode: 8, alias_split: test, mechanism_split: test}
+models:
+  llm: {id: Qwen/Qwen2.5-1.5B-Instruct, revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306, dtype: bfloat16}
+  specialist:
+    id: jingang/TabICL
+    package: tabicl==2.2.0
+    revision: 4dcd344ece2c00be9e831fdd35bed57b5ad83e19
+    source_revision: 0dbff3ec8fc68c123c87af77b0ea8b25cd2d23f3
+    checkpoint: tabicl-classifier-v2-20260212.ckpt
+controller: {hidden_dim: 256, source_protocol: crossfm-phase3-cached-recurrence-overfit-smoke-v3-vast-bf16-r2}
+source_checkpoint:
+  sha256:
+    "0": e18ee0d711657f433b5c35976d2629c4f5651184f7f021d76faa72d5ab1eafee
+    "1": d1f4dd40285390627bcbad5e039e96bb6006d4bb16aab9e13afd221aec47952d
+training:
+  seed: 9301
+  max_trainable_params: 5000000
+  bridge_hidden_dim: 256
+  epochs: 120
+  batch_size: 64
+  learning_rate: 0.001
+routing: {fallback_threshold: 0.10, states: 16, representation: continuous_posterior, residual_bypass: exact}
+runtime: {expected_gpus: 2, gpu_family: NVIDIA GeForce RTX 5090, llm_batch_size: 8, torch_dtype: bfloat16, attention: sdpa, cpu_threads_per_worker: 8, static_cache: tokenization_embeddings_schema_initial_tfm_prefix_kv, dynamic_cache: disabled_for_round_outputs}
+source: {git_commit: BUILD_TIME, dirty: BUILD_TIME}
+gate: {a_accuracy_min: 0.95, b_accuracy_min: 0.90, c2_accuracy_min: 0.60, recurrence_margin: 0.05, ablation_margin: 0.05}

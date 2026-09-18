@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 import re
 from typing import Iterable
 
@@ -138,6 +139,41 @@ class QwenBinaryBaseline:
         for parameter in self.model.parameters():
             parameter.requires_grad_(False)
         self.device = device
+        self.compute_dtype = dtype
+        self._static_token_cache: dict[str, dict[str, object]] = {}
+
+    def _autocast(self):
+        if self.device.startswith("cuda"):
+            return self.torch.autocast("cuda", dtype=self.compute_dtype)
+        return nullcontext()
+
+    def prefix_state_and_kv(self, text: str, repeats: int):
+        """Encode a static prefix once and return an expanded reusable KV cache."""
+        cached = self._static_token_cache.get(text)
+        if cached is None:
+            encoded = self.tokenizer(text, return_tensors="pt", add_special_tokens=True)
+            cached = {key: value.cpu() for key, value in encoded.items()}
+            self._static_token_cache[text] = cached
+        inputs = {key: value.to(self.device, non_blocking=True) for key, value in cached.items()}
+        with self.torch.inference_mode(), self._autocast():
+            output = self.model.model(**inputs, use_cache=True)
+        state = output.last_hidden_state[:, -1, :].float().repeat(repeats, 1)
+        cache = output.past_key_values
+        cache.batch_repeat_interleave(repeats)
+        return state, cache, int(inputs["input_ids"].shape[1])
+
+    def update_from_soft_evidence(self, evidence: object, past_key_values):
+        """Run one dynamic soft-evidence token using the cached static prefix KV."""
+        token = evidence.to(device=self.device, dtype=self.compute_dtype).unsqueeze(1)
+        with self.torch.inference_mode(), self._autocast():
+            output = self.model.model(
+                inputs_embeds=token, past_key_values=past_key_values, use_cache=True,
+            )
+        return output.last_hidden_state[:, -1, :].float(), output.past_key_values
+
+    @property
+    def static_token_cache_entries(self) -> int:
+        return len(self._static_token_cache)
 
     def hidden_state_preflight(self) -> tuple[int, ...]:
         inputs = self.tokenizer("schema: income premium", return_tensors="pt").to(self.device)
@@ -299,23 +335,29 @@ class TabICLBaseline:
         TabICL's decoder.  Ensemble representations are class-shuffle invariant
         and are averaged across estimators.  No specialist parameter is trained.
         """
+        return self.predict_arrays_with_evidence(ep.x_context, ep.y_context, ep.x_query)
+
+    def predict_arrays_with_evidence(
+        self, x_context: np.ndarray, y_context: np.ndarray, x_query: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return probabilities and frozen states for an explicit dynamic feature view."""
         import torch
 
         captured: list[np.ndarray] = []
 
         def capture(_module, _inputs, output):
             if torch.is_tensor(output):
-                captured.append(output.detach().float().cpu().numpy()[:, -len(ep.x_query):, :])
+                captured.append(output.detach().float().cpu().numpy()[:, -len(x_query):, :])
 
-        self.classifier.fit(ep.x_context, ep.y_context)
+        self.classifier.fit(x_context, y_context)
         handle = self.classifier.model_.icl_predictor.ln.register_forward_hook(capture)
         try:
-            probability = self.classifier.predict_proba(ep.x_query)[:, 1]
+            probability = self.classifier.predict_proba(x_query)[:, 1]
         finally:
             handle.remove()
         if not captured:
             raise RuntimeError("TabICL evidence hook captured no ICL states")
         evidence = np.concatenate(captured, axis=0).mean(axis=0)
-        if evidence.shape[0] != len(ep.x_query) or not np.isfinite(evidence).all():
+        if evidence.shape[0] != len(x_query) or not np.isfinite(evidence).all():
             raise RuntimeError(f"Invalid TabICL evidence shape {evidence.shape}")
         return probability, evidence

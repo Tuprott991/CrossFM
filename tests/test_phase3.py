@@ -1,6 +1,7 @@
 import numpy as np
 
 from crossfm.phase3 import CrossFMEpisodeCache, CrossFMLatentLoop, pack_cache
+from crossfm.phase3_dynamic import DynamicEvidenceBridge
 
 
 def _item(
@@ -74,3 +75,18 @@ def test_crossfm_training_reports_gradient_and_message_effect():
     assert report["max_gradient_norm"] > 0
     assert report["train_zero_message_mean_absolute_delta"] > 0
     assert np.isfinite(report["validation_loss"])
+
+
+def test_dynamic_evidence_bridge_fits_rich_hidden_messages_on_cpu():
+    rng = np.random.default_rng(23)
+    features = rng.normal(size=(24, 18)).astype(np.float32)
+    targets = rng.normal(size=(24, 12)).astype(np.float32)
+    bridge = DynamicEvidenceBridge(18, 12, 16, "cpu", 29)
+    before = bridge.predict(features, False).numpy()
+    report = bridge.fit(
+        features, targets, epochs=4, batch_size=8, learning_rate=1e-2, use_bfloat16=False,
+    )
+    after = bridge.predict(features, False).numpy()
+    assert bridge.trainable_params < 5_000_000
+    assert report["train_mse"] < np.mean((before - targets) ** 2)
+    assert not np.array_equal(before, after)
