@@ -16,6 +16,7 @@ def _item(name: str, gate: float, dimension: int = 12) -> CrossFMEpisodeCache:
         tfm_probability=rng.uniform(0.05, 0.95, size=4).astype(np.float32),
         gate=gate,
         labels=np.asarray([0, 0, 1, 1], dtype=np.float32),
+        relevant_view=0,
     )
 
 
@@ -33,7 +34,7 @@ def test_crossfm_rounds_share_parameters_and_messages_affect_output():
     two, weights = model.module(packed, 2)
     zero, _ = model.module(packed, 2, "zero")
     assert one.shape == two.shape == zero.shape == (2, 4)
-    assert weights.shape == (2, 4, 5)
+    assert weights.shape == (2, 4, 17)
     assert np.allclose(weights.detach().numpy().sum(-1), 1.0)
     assert not np.allclose(two.detach().numpy(), zero.detach().numpy())
     assert model.trainable_params < 5_000_000

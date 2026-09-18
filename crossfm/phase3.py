@@ -25,6 +25,7 @@ class CrossFMEpisodeCache:
     tfm_probability: np.ndarray
     gate: float
     labels: np.ndarray
+    relevant_view: int
 
 
 def _codebook_texts(ep: Episode, views: ViewEvidence) -> list[str]:
@@ -81,6 +82,9 @@ def build_crossfm_cache(
             tfm_probability=specialist[ep.episode_id].probability.astype(np.float32),
             gate=gate,
             labels=ep.y_query.astype(np.float32),
+            relevant_view=next(
+                (index for index, columns in enumerate(item.columns) if tuple(columns) == tuple(ep.relevant)), -1,
+            ),
         ))
     return result
 
@@ -92,7 +96,7 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
         raise ValueError("Cannot pack an empty CrossFM cache")
     queries = len(items[0].labels)
     dimension = len(items[0].task_embedding)
-    max_views = max(len(item.view_embeddings) for item in items)
+    max_views = max(17, max(len(item.view_embeddings) for item in items))
     count = len(items)
     task = np.zeros((count, dimension), dtype=np.float32)
     route = np.zeros_like(task)
@@ -103,6 +107,7 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
     tfm = np.zeros_like(llm)
     labels = np.zeros_like(llm)
     gates = np.zeros((count, 1), dtype=np.float32)
+    relevant_views = np.zeros(count, dtype=np.int64)
     for index, item in enumerate(items):
         if len(item.labels) != queries:
             raise ValueError("All packed episodes must have the same query count")
@@ -114,6 +119,7 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
         llm[index], tfm[index], labels[index], gates[index] = (
             item.llm_probability, item.tfm_probability, item.labels, item.gate,
         )
+        relevant_views[index] = item.relevant_view
 
     def tensor(array, dtype=None):
         value = torch.from_numpy(np.ascontiguousarray(array))
@@ -124,7 +130,24 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
         "view_probabilities": tensor(view_probabilities), "view_mask": tensor(mask),
         "llm_probability": tensor(llm), "tfm_probability": tensor(tfm),
         "labels": tensor(labels), "gates": tensor(gates),
+        "relevant_views": tensor(relevant_views),
         "episode_ids": [item.episode_id for item in items],
+    }
+
+
+def cache_diagnostics(items: list[CrossFMEpisodeCache]) -> dict:
+    relevant_correct, best_correct, total = 0, 0, 0
+    for item in items:
+        labels = item.labels.astype(bool)
+        if item.relevant_view >= 0:
+            relevant_correct += int(np.sum((item.view_probabilities[:, item.relevant_view] >= 0.5) == labels))
+        view_scores = [int(np.sum((item.view_probabilities[:, index] >= 0.5) == labels)) for index in range(item.view_probabilities.shape[1])]
+        best_correct += max(view_scores)
+        total += len(labels)
+    return {
+        "relevant_view_accuracy": relevant_correct / total if total else 0.0,
+        "posthoc_best_view_accuracy": best_correct / total if total else 0.0,
+        "predictions": total,
     }
 
 
@@ -138,7 +161,10 @@ def slice_pack(pack: dict, indices) -> dict:
 class CrossFMLatentLoop:
     """Shared recurrent latent bridge over cached frozen-backbone evidence."""
 
-    def __init__(self, embedding_dim: int, hidden_dim: int, max_rounds: int, device: str, seed: int):
+    def __init__(
+        self, embedding_dim: int, hidden_dim: int, max_rounds: int,
+        device: str, seed: int, max_views: int = 17,
+    ):
         import torch
         from torch import nn
 
@@ -154,6 +180,7 @@ class CrossFMLatentLoop:
                 self.route_down = nn.Linear(embedding_dim, hidden_dim)
                 self.view_down = nn.Linear(embedding_dim, hidden_dim)
                 self.scalar_down = nn.Linear(3, hidden_dim)
+                self.response_down = nn.Linear(max_views, hidden_dim)
                 self.evidence_up = nn.Linear(hidden_dim, embedding_dim)
                 self.state_norm = nn.LayerNorm(embedding_dim)
                 self.round_embedding = nn.Parameter(torch.zeros(max_rounds, hidden_dim))
@@ -173,6 +200,9 @@ class CrossFMLatentLoop:
                     route = route.roll(1, dims=0)
                 selected_probability = batch["tfm_probability"]
                 weights = None
+                weighted_response = torch.zeros(
+                    (*probabilities.shape[:2], probabilities.shape[2]), device=probabilities.device,
+                )
                 for round_index in range(rounds):
                     query = self.state_query(state)
                     keys = self.view_key(views)
@@ -182,21 +212,24 @@ class CrossFMLatentLoop:
                     weights = torch.softmax(logits, dim=-1)
                     selected_probability = torch.einsum("bqv,bqv->bq", weights, probabilities).clamp(1e-5, 1 - 1e-5)
                     selected_view = torch.einsum("bqv,bvd->bqd", weights, views)
+                    weighted_response = weights * torch.logit(probabilities.clamp(1e-5, 1 - 1e-5))
                     entropy = -(weights * torch.log(weights.clamp_min(1e-8))).sum(-1)
                     entropy = entropy / torch.log(mask.sum(-1).float().clamp_min(2))[:, None]
                     scalar = torch.stack((torch.logit(selected_probability), entropy, gates.expand(-1, query_count)), dim=-1)
                     evidence = (
                         self.route_down(route)[:, None, :] + self.view_down(selected_view)
-                        + self.scalar_down(scalar) + self.round_embedding[round_index]
+                        + self.scalar_down(scalar) + self.response_down(weighted_response)
+                        + self.round_embedding[round_index]
                     )
                     delta = self.evidence_up(torch.nn.functional.gelu(evidence))
                     if message_mode == "zero":
                         delta = torch.zeros_like(delta)
                         selected_probability = torch.full_like(selected_probability, 0.5)
+                        weighted_response = torch.zeros_like(weighted_response)
                     state = self.state_norm(state + gates[:, None, :] * delta)
                 scalar_head = torch.stack((torch.logit(selected_probability), torch.logit(batch["tfm_probability"].clamp(1e-5, 1 - 1e-5))), dim=-1)
                 adapter_logit = self.head_out(torch.nn.functional.gelu(
-                    self.head_state(state) + self.head_scalar(scalar_head)
+                    self.head_state(state) + self.head_scalar(scalar_head) + self.response_down(weighted_response)
                 )).squeeze(-1)
                 adapter_probability = torch.sigmoid(adapter_logit)
                 final_probability = (

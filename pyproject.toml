@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crossfm"
-version = "0.5.0"
+version = "0.5.1"
 description = "Falsifiable CrossFM benchmark and frozen-backbone baseline experiments"
 requires-python = ">=3.11"
 dependencies = [

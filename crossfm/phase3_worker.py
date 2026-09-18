@@ -16,7 +16,7 @@ from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from .baselines import QwenBinaryBaseline, TabICLBaseline
 from .io import atomic_json, canonical_digest, sha256_file
 from .phase2 import attach_language_embeddings, collect_specialist_evidence, collect_view_evidence
-from .phase3 import CrossFMLatentLoop, build_crossfm_cache, pack_cache
+from .phase3 import CrossFMLatentLoop, build_crossfm_cache, cache_diagnostics, pack_cache
 from .synthetic import Episode, make_episodes, split_hash
 
 
@@ -100,6 +100,8 @@ def main() -> None:
     print(json.dumps({"event": "cache_train", "episodes": len(train_episodes), "rank": args.rank}), flush=True)
     train_cache = _cache_split(llm, tfm, train_episodes, score_llm=False, threshold=threshold)
     validation_cache = _cache_split(llm, tfm, validation_episodes, score_llm=False, threshold=threshold)
+    train_cache_diagnostics = cache_diagnostics(train_cache)
+    validation_cache_diagnostics = cache_diagnostics(validation_cache)
 
     test_episodes_by_seed = {}
     test_cache_by_seed = {}
@@ -214,6 +216,8 @@ def main() -> None:
         "status": "complete", "rank": args.rank, "world_size": args.world_size,
         "completed": len(records), "config_digest": config_digest, "wheel_sha256": wheel_sha,
         "training": training, "state_digests": state_digests,
+        "train_cache_diagnostics": train_cache_diagnostics,
+        "validation_cache_diagnostics": validation_cache_diagnostics,
         "trainable_params_max": max(model.trainable_params for model in fitted.values()),
         "cache_bytes": cache_bytes, "backbone_peak_gpu_memory_bytes": backbone_peak,
         "peak_gpu_memory_bytes": int(torch.cuda.max_memory_allocated()),

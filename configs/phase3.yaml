@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-phase3-cached-recurrence-exploratory-v1
+  protocol_id: crossfm-phase3-cached-recurrence-exploratory-v2
   classification: exploratory_non_confirmatory
   test_seeds: [4701, 4702, 4703]
   regimes: [A, B, C2]
@@ -19,10 +19,10 @@ models:
 training:
   seed: 9101
   max_trainable_params: 5000000
-  hidden_dim: 128
+  hidden_dim: 256
   max_rounds: 2
-  epochs: 60
-  patience: 10
+  epochs: 100
+  patience: 15
   checkpoint_metric: validation
   episode_batch_size: 8
   learning_rate: 0.0003

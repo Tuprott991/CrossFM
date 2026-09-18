@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-phase3-cached-recurrence-overfit-smoke-v1
+  protocol_id: crossfm-phase3-cached-recurrence-overfit-smoke-v2
   classification: exploratory_engineering_smoke
   test_seeds: [8701, 8702]
   regimes: [A, B, C2]
@@ -19,13 +19,13 @@ models:
 training:
   seed: 9101
   max_trainable_params: 5000000
-  hidden_dim: 128
+  hidden_dim: 256
   max_rounds: 2
-  epochs: 80
-  patience: 15
+  epochs: 300
+  patience: 300
   checkpoint_metric: train
   episode_batch_size: 8
-  learning_rate: 0.0005
+  learning_rate: 0.001
 routing: {fallback_threshold: 0.10, states: 16, representation: continuous_posterior, residual_bypass: exact}
 runtime: {expected_gpus: 2, gpu_family: NVIDIA Tesla T4, llm_batch_size: 2, torch_dtype: float16, attention: sdpa, cpu_threads_per_worker: 2, cache: in_memory_gpu_after_backbone_unload}
 source: {git_commit: BUILD_TIME, dirty: BUILD_TIME}

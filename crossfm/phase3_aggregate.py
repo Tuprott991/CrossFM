@@ -117,6 +117,8 @@ def main() -> None:
         "peak_gpu_memory_bytes": max(worker["peak_gpu_memory_bytes"] for worker in workers),
         "worker_elapsed_seconds": [worker["elapsed_seconds"] for worker in workers],
         "training": [worker["training"] for worker in workers],
+        "train_cache_diagnostics": [worker["train_cache_diagnostics"] for worker in workers],
+        "validation_cache_diagnostics": [worker["validation_cache_diagnostics"] for worker in workers],
         "scientific_scope": "Exploratory Phase 3 cached-view CrossFM recurrence gate; frozen backbones, no novelty claim.",
     }
     atomic_json(output / "summary.json", summary)
