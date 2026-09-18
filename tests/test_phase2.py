@@ -1,7 +1,12 @@
+from dataclasses import replace
+
 import numpy as np
 
 from crossfm.baselines import adaptive_routing_oracle, semantic_statistical_oracle
-from crossfm.phase2 import candidate_views, tool_prompts, tune_ensemble_alpha
+from crossfm.phase2 import (
+    apply_residual_bypass, candidate_views, residual_gate, soft_code_posterior,
+    tool_prompts, tune_ensemble_alpha,
+)
 from crossfm.synthetic import make_episode, make_episodes
 
 
@@ -66,3 +71,37 @@ def test_c2_codebook_and_aliases_are_held_out():
     assert validation.feature_names[4] == "yearly_earnings"
     assert test.feature_names[4] == "household_revenue"
     assert len(candidate_views(test)) == 17
+
+
+def test_soft_route_posterior_is_continuous_and_normalized():
+    episode = make_episode("C2", 91, 0, alias_split="test", mechanism_split="test")
+    posterior = soft_code_posterior(episode)
+    assert posterior.shape == (16,)
+    assert np.isclose(posterior.sum(), 1.0)
+    assert np.all((posterior > 0.0) & (posterior < 1.0))
+
+
+def test_zero_routing_evidence_forces_exact_llm_bypass():
+    episode = make_episode("C2", 97, 0, alias_split="test", mechanism_split="test")
+    context = episode.x_context.copy()
+    context[:, episode.route_indices] = 0.0
+    episode = replace(episode, x_context=context)
+    posterior = soft_code_posterior(episode)
+    assert np.allclose(posterior, np.full(16, 1.0 / 16.0))
+    assert residual_gate(episode, posterior) == 0.0
+    llm = np.linspace(0.1, 0.9, len(episode.y_query))
+    adapter = 1.0 - llm
+    combined, gates = apply_residual_bypass([episode], llm, adapter, {episode.episode_id: 0.0})
+    assert np.array_equal(gates, np.zeros_like(gates))
+    assert np.array_equal(combined, llm)
+
+
+def test_task_a_uses_preservation_bypass():
+    episode = make_episode("A", 101, 0, alias_split="test", mechanism_split="test")
+    assert residual_gate(episode, soft_code_posterior(episode)) == 0.0
+
+
+def test_large_context_without_structure_also_uses_bypass():
+    episode = make_episode("B", 103, 0, alias_split="test", mechanism_split="test")
+    episode = replace(episode, x_context=np.zeros_like(episode.x_context))
+    assert residual_gate(episode, soft_code_posterior(episode)) == 0.0

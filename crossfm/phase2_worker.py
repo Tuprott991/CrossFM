@@ -16,8 +16,9 @@ from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from .baselines import QwenBinaryBaseline, TabICLBaseline, adaptive_routing_oracle
 from .io import atomic_json, canonical_digest, sha256_file
 from .phase2 import (
-    SoftPrefixAdapter, ViewScorer, attach_language_embeddings, collect_specialist_evidence,
-    collect_view_evidence, tool_prompts, tune_ensemble_alpha,
+    SoftPrefixAdapter, ViewScorer, apply_residual_bypass, attach_language_embeddings,
+    collect_routed_evidence, collect_specialist_evidence, collect_view_evidence,
+    tool_prompts, tune_ensemble_alpha,
 )
 from .synthetic import Episode, make_episodes, split_hash
 
@@ -118,7 +119,34 @@ def main() -> None:
         llm, evidence_dim, int(config["training"]["t2l_bottleneck"]),
         int(config["training"]["prefix_tokens"]), int(config["training"]["seed"]),
     )
-    total_trainable = l2t.trainable_params + t2l.trainable_params
+    routed_adapters = {}
+    routed_training = {}
+    fallback_threshold = float(config.get("routing", {}).get("fallback_threshold", 0.10))
+    for mode in ("hard", "soft"):
+        method = f"{mode}_routing_residual"
+        if method not in config["experiment"]["methods"]:
+            continue
+        train_evidence, _, _ = collect_routed_evidence(
+            train, train_specialist, train_views, mode, fallback_threshold,
+        )
+        validation_evidence, _, _ = collect_routed_evidence(
+            validation, validation_specialist, validation_views, mode, fallback_threshold,
+        )
+        adapter = SoftPrefixAdapter(
+            llm, next(iter(train_evidence.values())).representation.shape[1],
+            int(config["training"]["t2l_bottleneck"]), int(config["training"]["prefix_tokens"]),
+            int(config["training"]["seed"]) + 100,
+            max_length=int(config.get("routing", {}).get("llm_max_length", 512)),
+        )
+        routed_training[mode] = adapter.fit(
+            train, train_evidence, validation, validation_evidence,
+            int(config["training"]["t2l_epochs"]), int(config["training"]["t2l_batch_size"]),
+            float(config["training"]["t2l_learning_rate"]),
+        )
+        routed_adapters[mode] = adapter
+    total_trainable = l2t.trainable_params + t2l.trainable_params + sum(
+        adapter.trainable_params for adapter in routed_adapters.values()
+    )
     if total_trainable >= int(config["training"]["max_trainable_params"]):
         raise RuntimeError(f"Adapter budget exceeded: {total_trainable}")
     t2l_training = t2l.fit(
@@ -132,6 +160,11 @@ def main() -> None:
         "protocol_id": config["experiment"]["protocol_id"], "config_digest": config_digest,
         "l2t": l2t.module.state_dict(), "t2l_projector": t2l.projector.state_dict(), "t2l_head": t2l.head.state_dict(),
         "l2t_training": l2t_training, "t2l_training": t2l_training,
+        "routed_adapters": {
+            mode: {"projector": adapter.projector.state_dict(), "head": adapter.head.state_dict()}
+            for mode, adapter in routed_adapters.items()
+        },
+        "routed_training": routed_training,
     })
 
     # Validation-only mixture tuning. Test outcomes are never consulted.
@@ -146,6 +179,13 @@ def main() -> None:
         test_specialist = collect_specialist_evidence(tfm, test)
         test_views = collect_view_evidence(tfm, test)
         attach_language_embeddings(llm, test, test_views)
+        routed_test = {}
+        routed_gates = {}
+        routed_posteriors = {}
+        for mode in routed_adapters:
+            routed_test[mode], routed_gates[mode], routed_posteriors[mode] = collect_routed_evidence(
+                test, test_specialist, test_views, mode, fallback_threshold,
+            )
         for regime in config["experiment"]["regimes"]:
             regime_episodes = [ep for ep in test if ep.regime == regime]
             labels, ids = _flatten_labels(regime_episodes), _flatten_ids(regime_episodes)
@@ -173,6 +213,17 @@ def main() -> None:
             ])
 
             oracle_probability = adaptive_routing_oracle(regime_episodes).probabilities
+            routed_probabilities = {}
+            routed_gate_values = {}
+            for mode, adapter in routed_adapters.items():
+                adapter_probability, adapter_labels, adapter_ids = adapter.predict(
+                    regime_episodes, routed_test[mode], int(config["training"]["t2l_batch_size"]),
+                )
+                if not np.array_equal(labels, adapter_labels) or not np.array_equal(ids, adapter_ids):
+                    raise RuntimeError(f"{mode} routed prediction alignment failure")
+                routed_probabilities[mode], routed_gate_values[mode] = apply_residual_bypass(
+                    regime_episodes, llm_probability, adapter_probability, routed_gates[mode],
+                )
             values = {
                 "llm_only": (llm_probability, 0, len(labels), 0),
                 "tabicl_only": (tfm_probability, len(regime_episodes), 0, 0),
@@ -183,12 +234,25 @@ def main() -> None:
                 "llm_to_tfm_compute_matched": (l2t3_probability, 3 * len(regime_episodes), 0, l2t.trainable_params),
                 "adaptive_diagnostic_oracle": (oracle_probability, 0, 0, 0),
             }
+            for mode, adapter in routed_adapters.items():
+                values[f"{mode}_routing_residual"] = (
+                    routed_probabilities[mode], 16 * len(regime_episodes),
+                    math.ceil(len(labels) / int(config["training"]["t2l_batch_size"])),
+                    adapter.trainable_params,
+                )
             for method in config["experiment"]["methods"]:
                 probability, specialist_calls, llm_calls, trainable_params = values[method]
                 prefix = config["experiment"].get("artifact_prefix", "phase2")
                 experiment_id = f"{prefix}-{method}-{regime}-seed{seed}"
                 prediction_path = output / "predictions" / f"{experiment_id}.npz"
-                _atomic_npz(prediction_path, probability=probability, label=labels, episode_id=ids)
+                route_mode = method.removesuffix("_routing_residual") if method.endswith("_routing_residual") else None
+                artifact_arrays = {"probability": probability, "label": labels, "episode_id": ids}
+                if route_mode:
+                    artifact_arrays["residual_gate"] = routed_gate_values[route_mode]
+                    artifact_arrays["route_posterior"] = np.stack([
+                        routed_posteriors[route_mode][ep.episode_id] for ep in regime_episodes
+                    ])
+                _atomic_npz(prediction_path, **artifact_arrays)
                 record = {
                     "experiment_id": experiment_id,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -216,6 +280,9 @@ def main() -> None:
                     "checkpoint_file": str(checkpoint.relative_to(output)) if trainable_params else None,
                     "checkpoint_sha256": sha256_file(checkpoint) if trainable_params else None,
                     "selected_view_indices": selected_one if method == "llm_to_tfm" else selected_three if method == "llm_to_tfm_compute_matched" else None,
+                    "mean_residual_gate": float(routed_gate_values[route_mode].mean()) if route_mode else None,
+                    "exact_llm_bypass_fraction": float(np.mean(routed_gate_values[route_mode] == 0.0)) if route_mode else None,
+                    "routing_codebook_access": "deterministic_binding_of_disclosed_description" if route_mode else None,
                 }
                 atomic_json(output / "tasks" / f"{experiment_id}.json", record)
                 records.append(record)
@@ -226,6 +293,7 @@ def main() -> None:
         "assigned_seeds": seeds, "completed": len(records), "config_digest": config_digest,
         "wheel_sha256": wheel_sha, "trainable_params_total": total_trainable,
         "l2t_training": l2t_training, "t2l_training": t2l_training,
+        "routed_training": routed_training,
         "peak_gpu_memory_bytes": int(torch.cuda.max_memory_allocated()),
         "elapsed_seconds": time.perf_counter() - started, "platform": platform.platform(),
     })

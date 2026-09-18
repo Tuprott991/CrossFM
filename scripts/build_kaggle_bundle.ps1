@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2','phase2_smoke','phase2','phase25_smoke','phase25')]
+    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2','phase2_smoke','phase2','phase25_smoke','phase25','phase275_smoke','phase275')]
     [string]$Profile = 'smoke',
     [string]$KernelSlug = 'crossfm-phase-1-smoke-t4x2',
     [string]$KernelTitle = 'CrossFM Phase 1 Smoke T4x2'
@@ -12,7 +12,8 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $isPhase2 = $Profile.StartsWith('phase2')
 $isPhase25 = $Profile.StartsWith('phase25')
-$stagingName = if ($isPhase25) { 'dist\kaggle_phase25' } elseif ($isPhase2) { 'dist\kaggle_phase2' } else { 'dist\kaggle' }
+$isPhase275 = $Profile.StartsWith('phase275')
+$stagingName = if ($isPhase275) { 'dist\kaggle_phase275' } elseif ($isPhase25) { 'dist\kaggle_phase25' } elseif ($isPhase2) { 'dist\kaggle_phase2' } else { 'dist\kaggle' }
 $distRoot = [System.IO.Path]::GetFullPath((Join-Path $repo $stagingName))
 $expectedRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist'))
 if (-not $distRoot.StartsWith($expectedRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -58,8 +59,8 @@ $manifest = [ordered]@{
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'bundle_manifest.json') ($manifest | ConvertTo-Json -Depth 5)
 
 $datasetMetadata = [ordered]@{
-    title = if ($isPhase25) { 'CrossFM Phase 2.5 Immutable Bundle' } elseif ($isPhase2) { 'CrossFM Phase 2 Immutable Bundle' } else { 'CrossFM Phase 1 Immutable Bundle' }
-    id = if ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }
+    title = if ($isPhase275) { 'CrossFM Phase 2.75 Immutable Bundle' } elseif ($isPhase25) { 'CrossFM Phase 2.5 Immutable Bundle' } elseif ($isPhase2) { 'CrossFM Phase 2 Immutable Bundle' } else { 'CrossFM Phase 1 Immutable Bundle' }
+    id = if ($isPhase275) { 'tuktuai/crossfm-phase275-bundle' } elseif ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }
     licenses = @([ordered]@{ name = 'other' })
     isPrivate = $true
 }
@@ -76,7 +77,7 @@ $kernelMetadata = [ordered]@{
     enable_gpu = $true
     enable_internet = $true
     machine_shape = 'NvidiaTeslaT4'
-    dataset_sources = @($(if ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }))
+    dataset_sources = @($(if ($isPhase275) { 'tuktuai/crossfm-phase275-bundle' } elseif ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }))
     competition_sources = @()
     kernel_sources = @()
     model_sources = @()

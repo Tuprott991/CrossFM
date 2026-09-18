@@ -196,7 +196,10 @@ def _query_prompt(ep: Episode, row: np.ndarray) -> str:
 class SoftPrefixAdapter:
     """Frozen TabICL state -> learned soft prefix -> frozen Qwen -> binary head."""
 
-    def __init__(self, llm: QwenBinaryBaseline, evidence_dim: int, bottleneck: int, prefix_tokens: int, seed: int):
+    def __init__(
+        self, llm: QwenBinaryBaseline, evidence_dim: int, bottleneck: int,
+        prefix_tokens: int, seed: int, max_length: int = 160,
+    ):
         import torch
         from torch import nn
 
@@ -205,6 +208,7 @@ class SoftPrefixAdapter:
         self.device = llm.device
         self.hidden_dim = int(llm.model.config.hidden_size)
         self.prefix_tokens = prefix_tokens
+        self.max_length = max_length
         self.projector = nn.Sequential(
             nn.LayerNorm(evidence_dim), nn.Linear(evidence_dim, bottleneck), nn.GELU(),
             nn.Linear(bottleneck, prefix_tokens * self.hidden_dim),
@@ -218,7 +222,7 @@ class SoftPrefixAdapter:
     def _logits(self, prompts: list[str], evidence: np.ndarray):
         torch = self.torch
         tokens = self.llm.tokenizer(
-            prompts, padding=True, truncation=True, max_length=160, return_tensors="pt",
+            prompts, padding=True, truncation=True, max_length=self.max_length, return_tensors="pt",
         ).to(self.device)
         token_embeddings = self.llm.model.get_input_embeddings()(tokens["input_ids"])
         evidence_tensor = torch.from_numpy(evidence).float().to(self.device)
@@ -305,6 +309,107 @@ class SoftPrefixAdapter:
             logits = self._logits(prompts[start:start + batch_size], states[start:start + batch_size])
             probabilities.extend(torch.sigmoid(logits).detach().cpu().numpy().tolist())
         return np.asarray(probabilities), labels, ids
+
+
+def soft_code_posterior(ep: Episode) -> np.ndarray:
+    """Continuous posterior over C2's 16 routing states.
+
+    Correlations are converted to approximate Fisher-z evidence and retained as
+    probabilities. No sign threshold or discrete bit is used in the soft path.
+    """
+    if not ep.route_indices:
+        return np.full(16, 1.0 / 16.0, dtype=np.float64)
+    n = len(ep.y_context)
+    bit_probabilities = []
+    for feature in ep.route_indices:
+        corr = _absolute_safe_corr(ep.x_context[:, feature], ep.y_context, keep_sign=True)
+        fisher = np.arctanh(np.clip(corr, -0.999, 0.999)) * np.sqrt(max(n - 3, 1))
+        bit_probabilities.append(1.0 / (1.0 + np.exp(-fisher)))
+    posterior = np.ones(16, dtype=np.float64)
+    for code in range(16):
+        for bit, probability in enumerate(bit_probabilities):
+            posterior[code] *= probability if code & (1 << bit) else 1.0 - probability
+    return posterior / posterior.sum()
+
+
+def _absolute_safe_corr(values: np.ndarray, labels: np.ndarray, keep_sign: bool = False) -> float:
+    if np.std(values) == 0 or np.std(labels) == 0:
+        return 0.0
+    correlation = float(np.nan_to_num(np.corrcoef(values, labels)[0, 1]))
+    return correlation if keep_sign else abs(correlation)
+
+
+def statistical_structure_strength(ep: Episode) -> float:
+    """Conservative context evidence across simple features and pair transforms."""
+    candidates = [ep.x_context[:, i] for i in range(ep.x_context.shape[1])]
+    for i in range(0, ep.x_context.shape[1] - 1, 2):
+        a, b = ep.x_context[:, i], ep.x_context[:, i + 1]
+        candidates.extend((b - a, b + a, b * a))
+    maximum = max(_absolute_safe_corr(values, ep.y_context) for values in candidates)
+    return float(np.clip((maximum - 0.05) / 0.25, 0.0, 1.0))
+
+
+def residual_gate(ep: Episode, posterior: np.ndarray, fallback_threshold: float = 0.10) -> float:
+    """Evidence-strength gate with an exact LLM-only fallback.
+
+    C2 strength is normalized information in the routing posterior. Ordinary
+    tasks use context support as a conservative reliability proxy. Below the
+    frozen threshold, the adapter receives zero decision authority.
+    """
+    if ep.route_indices:
+        entropy = -float(np.sum(posterior * np.log(np.clip(posterior, 1e-12, 1.0))))
+        strength = 1.0 - entropy / np.log(len(posterior))
+    else:
+        support = float(np.clip((len(ep.y_context) - 8) / 24.0, 0.0, 1.0))
+        strength = support * statistical_structure_strength(ep)
+    if strength <= fallback_threshold:
+        return 0.0
+    return float(np.clip((strength - fallback_threshold) / (1.0 - fallback_threshold), 0.0, 1.0))
+
+
+def collect_routed_evidence(
+    episodes: Iterable[Episode], specialist: dict[str, EpisodeEvidence],
+    views: dict[str, ViewEvidence], mode: str, fallback_threshold: float = 0.10,
+) -> tuple[dict[str, EpisodeEvidence], dict[str, float], dict[str, np.ndarray]]:
+    """Build matched hard/soft latent evidence for the Phase 2.75 ablation."""
+    if mode not in {"hard", "soft"}:
+        raise ValueError(f"Unknown routing mode: {mode}")
+    routed, gates, posteriors = {}, {}, {}
+    for ep in episodes:
+        base = specialist[ep.episode_id]
+        posterior = soft_code_posterior(ep)
+        gate = residual_gate(ep, posterior, fallback_threshold)
+        if ep.route_indices:
+            state_predictions = np.stack([
+                views[ep.episode_id].probabilities[ep.route_map[code]] for code in range(16)
+            ], axis=1)
+            route_message = posterior.copy()
+            if mode == "hard":
+                route_message.fill(0.0)
+                route_message[int(np.argmax(posterior))] = 1.0
+        else:
+            state_predictions = np.zeros((len(ep.y_query), 16), dtype=np.float64)
+            route_message = np.zeros(16, dtype=np.float64)
+        repeated_route = np.repeat(route_message[None, :], len(ep.y_query), axis=0)
+        repeated_gate = np.full((len(ep.y_query), 1), gate, dtype=np.float64)
+        representation = np.concatenate(
+            [base.representation, repeated_route, state_predictions, repeated_gate], axis=1,
+        ).astype(np.float32)
+        routed[ep.episode_id] = EpisodeEvidence(base.probability, representation)
+        gates[ep.episode_id] = gate
+        posteriors[ep.episode_id] = posterior
+    return routed, gates, posteriors
+
+
+def apply_residual_bypass(
+    episodes: Iterable[Episode], llm_probability: np.ndarray,
+    adapter_probability: np.ndarray, gates: dict[str, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    gate_values = np.concatenate([
+        np.full(len(ep.y_query), gates[ep.episode_id], dtype=np.float64) for ep in episodes
+    ])
+    probability = (1.0 - gate_values) * llm_probability + gate_values * adapter_probability
+    return probability, gate_values
 
 
 def tool_prompts(ep: Episode, specialist_probability: np.ndarray) -> list[str]:

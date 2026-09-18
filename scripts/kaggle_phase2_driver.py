@@ -17,6 +17,8 @@ INPUT_CANDIDATES = (
     Path("/kaggle/input/datasets/tuktuai/crossfm-phase2-bundle"),
     Path("/kaggle/input/crossfm-phase25-bundle"),
     Path("/kaggle/input/datasets/tuktuai/crossfm-phase25-bundle"),
+    Path("/kaggle/input/crossfm-phase275-bundle"),
+    Path("/kaggle/input/datasets/tuktuai/crossfm-phase275-bundle"),
 )
 INPUT = INPUT_CANDIDATES[0]
 WORKING = Path("/kaggle/working")

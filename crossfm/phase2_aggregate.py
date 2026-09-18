@@ -94,7 +94,9 @@ def main() -> None:
         "peak_gpu_memory_bytes": max(item["peak_gpu_memory_bytes"] for item in worker_summaries),
         "worker_elapsed_seconds": [item["elapsed_seconds"] for item in worker_summaries],
         "scientific_scope": (
-            "Exploratory Phase 2.5 adaptive-complementarity gate. No CrossFM result or novelty claim."
+            "Exploratory Phase 2.75 soft-routing and preservation-bypass ablation. No recurrent CrossFM or novelty claim."
+            if "phase2.75" in config["experiment"]["protocol_id"]
+            else "Exploratory Phase 2.5 adaptive-complementarity gate. No CrossFM result or novelty claim."
             if "C2" in config["experiment"]["regimes"]
             else "Exploratory Phase 2 baseline calibration only. No CrossFM result or novelty claim."
         ),
@@ -112,6 +114,20 @@ def main() -> None:
         }
         summary["adaptive_gate_checks"] = checks
         summary["adaptive_gate_passed"] = all(checks.values())
+    if {"hard_routing_residual", "soft_routing_residual"}.issubset(methods):
+        gate = config["preservation_gate"]
+        a_records = [r for r in records if r["condition"] == "A" and r["method"] == "soft_routing_residual"]
+        checks = {
+            "A_llm_performance_preserved": results["A"]["soft_routing_residual"]["mean_accuracy"]
+            >= results["A"]["llm_only"]["mean_accuracy"] - float(gate["a_tolerance"]),
+            "A_exact_llm_bypass": all(r["exact_llm_bypass_fraction"] == 1.0 for r in a_records),
+            "B_specialist_performance_retained": results["B"]["soft_routing_residual"]["mean_accuracy"]
+            >= results["B"]["tabicl_only"]["mean_accuracy"] - float(gate["b_tolerance"]),
+            "C2_soft_not_worse_than_hard": results["C2"]["soft_routing_residual"]["mean_accuracy"]
+            >= results["C2"]["hard_routing_residual"]["mean_accuracy"] - float(gate["soft_tolerance"]),
+        }
+        summary["phase275_checks"] = checks
+        summary["phase275_passed"] = all(checks.values())
     atomic_json(output / "summary.json", summary)
     print(json.dumps(summary, indent=2))
 

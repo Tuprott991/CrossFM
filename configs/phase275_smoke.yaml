@@ -1,0 +1,36 @@
+experiment:
+  protocol_id: crossfm-phase2.75-soft-residual-smoke-v1
+  artifact_prefix: phase275
+  classification: exploratory_engineering_smoke
+  test_seeds: [5701, 5702]
+  regimes: [A, B, C2]
+  methods: [llm_only, tabicl_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, textual_tool, llm_to_tfm_compute_matched, adaptive_diagnostic_oracle, hard_routing_residual, soft_routing_residual]
+  llm_evaluation: exact_sequence_level_label_likelihood_final_low_vs_high
+data:
+  train: {seed: 5101, episodes_per_regime: 1, queries_per_episode: 4, alias_split: train, mechanism_split: train}
+  validation: {seed: 5201, episodes_per_regime: 1, queries_per_episode: 4, alias_split: validation, mechanism_split: validation}
+  test: {episodes_per_regime: 1, queries_per_episode: 8, alias_split: test, mechanism_split: test}
+models:
+  llm: {id: Qwen/Qwen2.5-1.5B-Instruct, revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306, dtype: float16}
+  specialist:
+    id: jingang/TabICL
+    package: tabicl==2.2.0
+    revision: 4dcd344ece2c00be9e831fdd35bed57b5ad83e19
+    source_revision: 0dbff3ec8fc68c123c87af77b0ea8b25cd2d23f3
+    checkpoint: tabicl-classifier-v2-20260212.ckpt
+training:
+  seed: 7201
+  max_trainable_params: 5000000
+  l2t_hidden_dim: 64
+  l2t_epochs: 1
+  l2t_learning_rate: 0.001
+  t2l_bottleneck: 64
+  prefix_tokens: 2
+  t2l_epochs: 1
+  t2l_batch_size: 1
+  t2l_learning_rate: 0.0003
+routing: {fallback_threshold: 0.10, llm_max_length: 512, states: 16, representation: continuous_posterior}
+runtime: {expected_gpus: 2, gpu_family: NVIDIA Tesla T4, llm_batch_size: 1, torch_dtype: float16, attention: sdpa}
+source: {git_commit: BUILD_TIME, dirty: BUILD_TIME}
+gate: {a_margin: 0.10, b_margin: 0.10, oracle_min: 0.80, one_call_max: 0.62, three_call_max: 0.68, all_baseline_max: 0.70}
+preservation_gate: {a_tolerance: 0.00, b_tolerance: 0.05, soft_tolerance: 0.02}

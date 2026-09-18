@@ -48,6 +48,11 @@ def main() -> None:
             assert set(config["gate"]) == {
                 "a_margin", "b_margin", "oracle_min", "one_call_max", "three_call_max", "all_baseline_max",
             }
+        if "phase2.75" in config["experiment"]["protocol_id"]:
+            expected_methods.update({"hard_routing_residual", "soft_routing_residual"})
+            assert config["routing"]["states"] == 16
+            assert config["routing"]["representation"] == "continuous_posterior"
+            assert set(config["preservation_gate"]) == {"a_tolerance", "b_tolerance", "soft_tolerance"}
         assert set(config["experiment"]["methods"]) == expected_methods
         assert [config["data"][name]["alias_split"] for name in ("train", "validation", "test")] == [
             "train", "validation", "test",
