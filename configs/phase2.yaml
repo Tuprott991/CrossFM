@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-phase2-baselines-exploratory-v2-sequence-likelihood
+  protocol_id: crossfm-phase2-baselines-exploratory-v3-memory-safe-likelihood
   classification: exploratory_non_confirmatory
   test_seeds: [2701, 2702, 2703]
   regimes: [A, B, C]

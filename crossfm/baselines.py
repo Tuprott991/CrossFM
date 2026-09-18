@@ -144,17 +144,30 @@ class QwenBinaryBaseline:
                 {"input_ids": [item[2] for item in group]}, padding=True, return_tensors="pt",
             ).to(self.device)
             with self.torch.inference_mode():
-                logits = self.model(**batch, use_cache=False).logits.float()
-                log_probs = self.torch.log_softmax(logits, dim=-1)
+                # Avoid materializing [batch, long_prompt, full_vocabulary]
+                # logits. Only the few hidden positions that predict the
+                # candidate suffix need to pass through the LM head.
+                hidden = self.model.model(**batch, use_cache=False).last_hidden_state
             sequence_length = batch["input_ids"].shape[1]
+            suffix_states, suffix_targets, destinations = [], [], []
             for row, (prompt_index, candidate_index, _ids, suffix_length) in enumerate(group):
                 token_positions = self.torch.arange(
                     sequence_length - suffix_length - 1, sequence_length - 1, device=self.device,
                 )
-                target_tokens = batch["input_ids"][row, -suffix_length:]
-                scores[prompt_index, candidate_index] = float(
-                    log_probs[row, token_positions, target_tokens].sum().cpu()
-                )
+                suffix_states.append(hidden[row, token_positions])
+                suffix_targets.append(batch["input_ids"][row, -suffix_length:])
+                destinations.append((prompt_index, candidate_index, suffix_length))
+            with self.torch.inference_mode():
+                selected_states = self.torch.cat(suffix_states, dim=0)
+                selected_targets = self.torch.cat(suffix_targets, dim=0)
+                suffix_logits = self.model.lm_head(selected_states).float()
+                token_log_probs = self.torch.log_softmax(suffix_logits, dim=-1)[
+                    self.torch.arange(len(selected_targets), device=self.device), selected_targets
+                ]
+            offset = 0
+            for prompt_index, candidate_index, suffix_length in destinations:
+                scores[prompt_index, candidate_index] = float(token_log_probs[offset:offset + suffix_length].sum().cpu())
+                offset += suffix_length
         normalized = scores - scores.max(axis=1, keepdims=True)
         exp_scores = np.exp(normalized)
         return exp_scores[:, 1] / exp_scores.sum(axis=1)

@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-phase2-engineering-smoke-v2-sequence-likelihood
+  protocol_id: crossfm-phase2-engineering-smoke-v3-memory-safe-likelihood
   classification: exploratory_engineering_smoke
   test_seeds: [3701, 3702]
   regimes: [A, B, C]
