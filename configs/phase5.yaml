@@ -1,0 +1,29 @@
+experiment:
+  protocol_id: crossfm-phase5-cached-shortcut-audit-exploratory-v1
+  classification: exploratory_non_confirmatory
+  test_seeds: [12701, 12702, 12703, 12704, 12705]
+  regimes: [A, B, C2]
+  methods: [analytic_router, semantic_cosine_router, prior_start_r1, prior_start_r2, prior_start_r3, message_only_r1, message_only_r2, message_only_r3, message_only_r2_zero_t2l, message_only_r2_shuffle_t2l, message_only_r2_zero_l2t, l2t_only_compute_matched, random_bridge_r2]
+data:
+  train: {seed: 12101, episodes: {A: 8, B: 8, C2: 64}, queries_per_episode: 8, alias_split: train, mechanism_split: train}
+  validation: {seed: 12201, episodes: {A: 4, B: 4, C2: 16}, queries_per_episode: 8, alias_split: validation, mechanism_split: validation}
+  test: {episodes: {A: 10, B: 10, C2: 80}, queries_per_episode: 8, alias_split: test, mechanism_split: test}
+models:
+  llm: {id: Qwen/Qwen2.5-1.5B-Instruct, revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306, dtype: float16}
+  specialist:
+    id: jingang/TabICL
+    package: tabicl==2.2.0
+    revision: 4dcd344ece2c00be9e831fdd35bed57b5ad83e19
+    source_revision: 0dbff3ec8fc68c123c87af77b0ea8b25cd2d23f3
+    checkpoint: tabicl-classifier-v2-20260212.ckpt
+training: {seed: 12901, max_trainable_params: 5000000, hidden_dim: 256, max_rounds: 3, epochs: 100, patience: 15, episode_batch_size: 8, learning_rate: 0.0003, primary_objective: shared_depth_supervision_0.2_0.6_0.2_validation_r2}
+routing: {fallback_threshold: 0.10, states: 16, representation: continuous_posterior, residual_bypass: exact}
+audit:
+  analytical_prior_path: posterior_times_disclosed_codebook
+  message_only_path: continuous_semantic_route_message
+  auxiliary_prediction_head: forbidden
+  semantic_cosine_temperature: 0.05
+  information_parity: prior_available_before_round_1
+runtime: {expected_gpus: 2, gpu_family: NVIDIA Tesla T4, llm_batch_size: 2, torch_dtype: float16, attention: sdpa, cpu_threads_per_worker: 2, cache: single_shared_in_memory_gpu_backbone_cache}
+source: {git_commit: BUILD_TIME, dirty: BUILD_TIME}
+gate: {a_accuracy_min: 0.98, b_accuracy_min: 0.87, shortcut_accuracy_min: 0.80, message_accuracy_min: 0.70, depth_equivalence_tolerance: 0.02, recurrence_margin: 0.05, ablation_margin: 0.10, one_way_margin: 0.05}

@@ -108,6 +108,26 @@ def main() -> None:
         if "smoke" not in config["experiment"]["protocol_id"]:
             assert len(config["experiment"]["test_seeds"]) == 5
             assert sum(int(value) for value in config["data"]["test"]["episodes"].values()) == 100
+    if config["experiment"]["protocol_id"].startswith("crossfm-phase5"):
+        assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
+        assert set(config["experiment"]["methods"]) == {
+            "analytic_router", "semantic_cosine_router", "prior_start_r1", "prior_start_r2",
+            "prior_start_r3", "message_only_r1", "message_only_r2", "message_only_r3",
+            "message_only_r2_zero_t2l", "message_only_r2_shuffle_t2l",
+            "message_only_r2_zero_l2t", "l2t_only_compute_matched", "random_bridge_r2",
+        }
+        assert len(config["experiment"]["test_seeds"]) == 5
+        assert sum(int(value) for value in config["data"]["test"]["episodes"].values()) == 100
+        assert len(set(config["experiment"]["test_seeds"]) & {10701, 10702, 10703, 10704, 10705}) == 0
+        assert config["audit"]["auxiliary_prediction_head"] == "forbidden"
+        assert config["audit"]["information_parity"] == "prior_available_before_round_1"
+        assert int(config["training"]["max_rounds"]) == 3
+        assert int(config["training"]["max_trainable_params"]) <= 5_000_000
+        assert config["runtime"]["cache"] == "single_shared_in_memory_gpu_backbone_cache"
+        assert config["routing"] == {
+            "fallback_threshold": 0.10, "states": 16,
+            "representation": "continuous_posterior", "residual_bypass": "exact",
+        }
     assert (kernel / kernel_metadata["code_file"]).is_file()
     print(json.dumps({
         "status": "valid", "bundle": str(root), "protocol_id": config["experiment"]["protocol_id"],

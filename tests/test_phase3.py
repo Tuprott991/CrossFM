@@ -3,6 +3,7 @@ import numpy as np
 from crossfm.phase3 import CrossFMEpisodeCache, CrossFMLatentLoop, pack_cache
 from crossfm.phase3_dynamic import DynamicEvidenceBridge
 from crossfm.phase4 import CrossFMCorrectiveLoop
+from crossfm.phase5 import CrossFMShortcutAudit, fixed_router_predict
 
 
 def _item(
@@ -142,3 +143,39 @@ def test_corrective_loop_trains_with_shared_depth_supervision():
     assert probability.shape == labels.shape == (16,)
     assert traces["weights"].shape == (4, 3, 4, 17)
     assert traces["update_gate"].shape == (4, 3, 4)
+
+
+def test_phase5_message_path_cannot_read_direct_prior_in_round_one():
+    import torch
+
+    packed = pack_cache([_item("p5-c0", 0.9), _item("p5-c1", 0.8)], "cpu")
+    model = CrossFMShortcutAudit(12, 8, "cpu", 47)
+    message_before, _ = model.module(packed, 1, "message")
+    packed["route_view_prior"].zero_(); packed["route_view_prior"][:, 0] = 1.0
+    message_after, _ = model.module(packed, 1, "message")
+    prior_after, _ = model.module(packed, 1, "prior")
+    assert torch.equal(message_before, message_after)
+    assert not torch.allclose(message_after, prior_after)
+
+
+def test_phase5_exact_bypass_and_zero_parameter_analytic_router():
+    import torch
+
+    packed = pack_cache([_item("p5-a", 0.0, routed=False)], "cpu")
+    with torch.inference_mode():
+        probability, labels, traces = fixed_router_predict(packed, "analytic")
+    assert np.array_equal(probability, packed["llm_probability"].numpy().reshape(-1))
+    assert np.array_equal(labels, packed["labels"].numpy().reshape(-1))
+    assert traces["weights"].shape == (1, 1, 4, 17)
+
+
+def test_phase5_message_only_second_beat_uses_continuous_message():
+    packed = pack_cache([_item("p5-m0", 0.9), _item("p5-m1", 0.8)], "cpu")
+    model = CrossFMShortcutAudit(12, 8, "cpu", 53)
+    one, trace_one = model.module(packed, 1, "message")
+    two, trace_two = model.module(packed, 2, "message")
+    zero, _ = model.module(packed, 2, "zero_t2l")
+    assert one.shape == two.shape == zero.shape == (2, 4)
+    assert len(trace_one["weights"]) == 1 and len(trace_two["weights"]) == 2
+    assert not np.allclose(two.detach().numpy(), zero.detach().numpy())
+    assert model.trainable_params < 5_000_000
