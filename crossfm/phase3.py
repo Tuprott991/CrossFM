@@ -28,6 +28,8 @@ class CrossFMEpisodeCache:
     relevant_view: int
     route_view_prior: np.ndarray
     routed: bool
+    code_posterior: np.ndarray | None = None
+    codebook_embeddings: np.ndarray | None = None
 
 
 def _codebook_texts(ep: Episode, views: ViewEvidence) -> list[str]:
@@ -69,12 +71,14 @@ def build_crossfm_cache(
             if key not in codebook_cache:
                 codebook_cache[key] = llm.encode_texts(_codebook_texts(ep, item))
             route_message = posterior @ codebook_cache[key]
+            codebook_embeddings = codebook_cache[key]
             route_view_prior = np.zeros(len(item.descriptions), dtype=np.float64)
             for code, probability in enumerate(posterior):
                 route_view_prior[ep.route_map[code]] += probability
         else:
             route_message = np.zeros_like(item.task_embedding)
             route_view_prior = np.full(len(item.descriptions), 1.0 / len(item.descriptions), dtype=np.float64)
+            codebook_embeddings = np.zeros((16, len(item.task_embedding)), dtype=np.float32)
         result.append(CrossFMEpisodeCache(
             episode_id=ep.episode_id,
             regime=ep.regime,
@@ -93,6 +97,8 @@ def build_crossfm_cache(
             ),
             route_view_prior=route_view_prior.astype(np.float32),
             routed=bool(ep.route_indices),
+            code_posterior=posterior.astype(np.float32),
+            codebook_embeddings=np.asarray(codebook_embeddings, dtype=np.float32),
         ))
     return result
 
@@ -118,6 +124,8 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
     relevant_views = np.zeros(count, dtype=np.int64)
     route_view_prior = np.zeros((count, max_views), dtype=np.float32)
     routed = np.zeros((count, 1), dtype=bool)
+    code_posterior = np.zeros((count, 16), dtype=np.float32)
+    codebook_embeddings = np.zeros((count, 16, dimension), dtype=np.float32)
     for index, item in enumerate(items):
         if len(item.labels) != queries:
             raise ValueError("All packed episodes must have the same query count")
@@ -132,6 +140,10 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
         relevant_views[index] = item.relevant_view
         route_view_prior[index, :width] = item.route_view_prior
         routed[index] = item.routed
+        if item.code_posterior is not None:
+            code_posterior[index] = item.code_posterior
+        if item.codebook_embeddings is not None:
+            codebook_embeddings[index] = item.codebook_embeddings
 
     def tensor(array, dtype=None):
         value = torch.from_numpy(np.ascontiguousarray(array))
@@ -144,6 +156,7 @@ def pack_cache(items: list[CrossFMEpisodeCache], device: str) -> dict:
         "labels": tensor(labels), "gates": tensor(gates),
         "relevant_views": tensor(relevant_views),
         "route_view_prior": tensor(route_view_prior), "routed": tensor(routed),
+        "code_posterior": tensor(code_posterior), "codebook_embeddings": tensor(codebook_embeddings),
         "episode_ids": [item.episode_id for item in items],
     }
 

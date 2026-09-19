@@ -4,12 +4,14 @@ from crossfm.phase3 import CrossFMEpisodeCache, CrossFMLatentLoop, pack_cache
 from crossfm.phase3_dynamic import DynamicEvidenceBridge
 from crossfm.phase4 import CrossFMCorrectiveLoop
 from crossfm.phase5 import CrossFMShortcutAudit, fixed_router_predict
+from crossfm.phase51 import StructuredPosteriorBridge
 
 
 def _item(
     name: str, gate: float, dimension: int = 12, *, routed: bool | None = None,
 ) -> CrossFMEpisodeCache:
     rng = np.random.default_rng(abs(hash(name)) % (2**32))
+    posterior = rng.dirichlet(np.ones(16)).astype(np.float32)
     return CrossFMEpisodeCache(
         episode_id=name,
         regime="C2" if gate else "A",
@@ -24,6 +26,8 @@ def _item(
         relevant_view=0,
         route_view_prior=np.full(5, 0.2, dtype=np.float32),
         routed=bool(gate) if routed is None else routed,
+        code_posterior=posterior,
+        codebook_embeddings=rng.normal(size=(16, dimension)).astype(np.float32),
     )
 
 
@@ -179,3 +183,42 @@ def test_phase5_message_only_second_beat_uses_continuous_message():
     assert len(trace_one["weights"]) == 1 and len(trace_two["weights"]) == 2
     assert not np.allclose(two.detach().numpy(), zero.detach().numpy())
     assert model.trainable_params < 5_000_000
+
+
+def test_phase51_zero_message_and_no_new_information_are_bitwise_exact():
+    import torch
+
+    packed = pack_cache([_item("p51-c0", 0.9), _item("p51-c1", 0.8)], "cpu")
+    model = StructuredPosteriorBridge(12, 8, "cpu", 59)
+    r1, _ = model.module(packed, 1, "soft")
+    zero_r2, _ = model.module(packed, 2, "zero")
+    soft_r2, _ = model.module(packed, 2, "soft")
+    soft_r3, _ = model.module(packed, 3, "soft")
+    assert torch.equal(r1, zero_r2)
+    assert torch.equal(soft_r2, soft_r3)
+
+
+def test_phase51_learned_path_cannot_read_analytical_route_prior():
+    import torch
+
+    packed = pack_cache([_item("p51-prior0", 0.9), _item("p51-prior1", 0.8)], "cpu")
+    model = StructuredPosteriorBridge(12, 8, "cpu", 61)
+    before, _ = model.module(packed, 2, "soft")
+    packed["route_view_prior"].zero_(); packed["route_view_prior"][:, 0] = 1.0
+    after, _ = model.module(packed, 2, "soft")
+    uniform, _ = model.module(packed, 2, "uniform")
+    assert torch.equal(before, after)
+    assert not torch.allclose(after, uniform)
+    assert model.trainable_params < 5_000_000
+
+
+def test_phase51_training_preserves_exact_identity_contract():
+    items = [_item(f"p51-train-{index}", 0.9) for index in range(4)]
+    packed = pack_cache(items, "cpu")
+    model = StructuredPosteriorBridge(12, 8, "cpu", 67)
+    report = model.fit(
+        packed, packed, epochs=2, batch_size=2, learning_rate=1e-3, patience=2,
+    )
+    assert report["exact_zero_identity"] is True
+    assert report["max_gradient_norm"] > 0
+    assert np.isfinite(report["validation_loss"])

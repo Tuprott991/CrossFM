@@ -108,7 +108,7 @@ def main() -> None:
         if "smoke" not in config["experiment"]["protocol_id"]:
             assert len(config["experiment"]["test_seeds"]) == 5
             assert sum(int(value) for value in config["data"]["test"]["episodes"].values()) == 100
-    if config["experiment"]["protocol_id"].startswith("crossfm-phase5"):
+    if config["experiment"]["protocol_id"].startswith("crossfm-phase5") and not config["experiment"]["protocol_id"].startswith("crossfm-phase5.1"):
         assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
         assert set(config["experiment"]["methods"]) == {
             "analytic_router", "semantic_cosine_router", "prior_start_r1", "prior_start_r2",
@@ -128,6 +128,21 @@ def main() -> None:
             "fallback_threshold": 0.10, "states": 16,
             "representation": "continuous_posterior", "residual_bypass": "exact",
         }
+    if config["experiment"]["protocol_id"].startswith("crossfm-phase5.1"):
+        assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
+        assert set(config["experiment"]["methods"]) == {
+            "analytic_router", "structured_soft_r1", "structured_soft_r2", "structured_soft_r3",
+            "structured_r2_zero_t2l", "structured_r2_shuffle_t2l", "structured_r2_hard_posterior",
+            "structured_r2_uniform_posterior", "structured_r2_random_bridge",
+        }
+        assert len(config["experiment"]["test_seeds"]) == 5
+        assert sum(int(value) for value in config["data"]["test"]["episodes"].values()) == 100
+        assert not set(config["experiment"]["test_seeds"]) & {12701, 12702, 12703, 12704, 12705}
+        assert config["audit"]["route_view_prior_access_for_learned_methods"] == "forbidden"
+        assert config["audit"]["zero_message_identity"] == "bitwise"
+        assert config["audit"]["no_new_information_depth_saturation"] == "bitwise"
+        assert int(config["training"]["max_trainable_params"]) <= 5_000_000
+        assert config["runtime"]["cache"] == "single_shared_in_memory_gpu_backbone_cache"
     assert (kernel / kernel_metadata["code_file"]).is_file()
     print(json.dumps({
         "status": "valid", "bundle": str(root), "protocol_id": config["experiment"]["protocol_id"],
