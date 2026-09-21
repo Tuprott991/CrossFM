@@ -3,8 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import yaml
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from crossfm.fullpaper.artifacts import sha256_file
 from crossfm.fullpaper.protocol import tasks_for_profile, validate_protocol
