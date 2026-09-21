@@ -14,8 +14,9 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $distBase = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist\fullpaper'))
-$safeProfile = $Profile -replace '[^a-zA-Z0-9.-]', '-'
-$distRoot = [System.IO.Path]::GetFullPath((Join-Path $distBase $safeProfile))
+$pathProfile = $Profile -replace '[^a-zA-Z0-9_.-]', '-'
+$slugProfile = $Profile -replace '[^a-zA-Z0-9.-]', '-'
+$distRoot = [System.IO.Path]::GetFullPath((Join-Path $distBase $pathProfile))
 if (-not $distRoot.StartsWith($distBase + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Unsafe staging path: $distRoot"
 }
@@ -59,8 +60,8 @@ $configTarget = Join-Path $datasetDir.FullName 'frozen_experiment.yaml'
 Write-Utf8NoBom $configTarget $frozen
 $wheelHash = (Get-FileHash -LiteralPath $wheelTarget -Algorithm SHA256).Hash.ToLowerInvariant()
 $configHash = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash.ToLowerInvariant()
-$bundleSlug = "crossfm-$safeProfile-bundle".ToLowerInvariant()
-$runId = "$($profileInfo.protocol)-$safeProfile-$($commit.Substring(0, 8))"
+$bundleSlug = "crossfm-$slugProfile-bundle".ToLowerInvariant()
+$runId = "$($profileInfo.protocol)-$slugProfile-$($commit.Substring(0, 8))"
 $dependencies = @(
     'numpy==1.26.4', 'pandas==2.2.3', 'python-dotenv==1.0.1',
     'PyYAML==6.0.2', 'scikit-learn==1.6.1',

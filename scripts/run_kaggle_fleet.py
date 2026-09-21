@@ -100,7 +100,7 @@ def _run(
         "kernel push error:", "notebook push error:",
     ))
     if check and (result.returncode or semantic_error):
-        message = (result.stderr or result.stdout).strip()
+        message = (result.stdout + "\n" + result.stderr).strip()
         raise RuntimeError(f"Command failed ({result.returncode}): {command[0]}: {message[-3000:]}")
     return result
 
