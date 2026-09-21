@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2','phase2_smoke','phase2','phase25_smoke','phase25','phase275_smoke','phase275','phase3_smoke','phase3_smoke_vast','phase3_dynamic_smoke_vast','phase3','phase4_smoke','phase4','phase5','phase51')]
+    [ValidateSet('smoke','phase1','smoke_v2','phase1_v2','phase2_smoke','phase2','phase25_smoke','phase25','phase275_smoke','phase275','phase3_smoke','phase3_smoke_vast','phase3_dynamic_smoke_vast','phase3','phase4_smoke','phase4','phase5','phase51','phase52')]
     [string]$Profile = 'smoke',
     [string]$KernelSlug = 'crossfm-phase-1-smoke-t4x2',
     [string]$KernelTitle = 'CrossFM Phase 1 Smoke T4x2'
@@ -15,9 +15,10 @@ $isPhase25 = $Profile.StartsWith('phase25')
 $isPhase275 = $Profile.StartsWith('phase275')
 $isPhase3 = $Profile.StartsWith('phase3')
 $isPhase4 = $Profile.StartsWith('phase4')
+$isPhase52 = $Profile -eq 'phase52'
 $isPhase51 = $Profile -eq 'phase51'
 $isPhase5 = $Profile -eq 'phase5'
-$stagingName = if ($isPhase51) { 'dist\kaggle_phase51' } elseif ($isPhase5) { 'dist\kaggle_phase5' } elseif ($isPhase4) { 'dist\kaggle_phase4' } elseif ($Profile -eq 'phase3_dynamic_smoke_vast') { 'dist\vast_phase3_dynamic' } elseif ($Profile -eq 'phase3_smoke_vast') { 'dist\vast_phase3' } elseif ($isPhase3) { 'dist\kaggle_phase3' } elseif ($isPhase275) { 'dist\kaggle_phase275' } elseif ($isPhase25) { 'dist\kaggle_phase25' } elseif ($isPhase2) { 'dist\kaggle_phase2' } else { 'dist\kaggle' }
+$stagingName = if ($isPhase52) { 'dist\kaggle_phase52' } elseif ($isPhase51) { 'dist\kaggle_phase51' } elseif ($isPhase5) { 'dist\kaggle_phase5' } elseif ($isPhase4) { 'dist\kaggle_phase4' } elseif ($Profile -eq 'phase3_dynamic_smoke_vast') { 'dist\vast_phase3_dynamic' } elseif ($Profile -eq 'phase3_smoke_vast') { 'dist\vast_phase3' } elseif ($isPhase3) { 'dist\kaggle_phase3' } elseif ($isPhase275) { 'dist\kaggle_phase275' } elseif ($isPhase25) { 'dist\kaggle_phase25' } elseif ($isPhase2) { 'dist\kaggle_phase2' } else { 'dist\kaggle' }
 $distRoot = [System.IO.Path]::GetFullPath((Join-Path $repo $stagingName))
 $expectedRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist'))
 if (-not $distRoot.StartsWith($expectedRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -63,13 +64,13 @@ $manifest = [ordered]@{
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'bundle_manifest.json') ($manifest | ConvertTo-Json -Depth 5)
 
 $datasetMetadata = [ordered]@{
-    title = if ($isPhase51) { 'CrossFM Phase 5.1 Immutable Bundle' } elseif ($isPhase5) { 'CrossFM Phase 5 Immutable Bundle' } elseif ($isPhase4) { 'CrossFM Phase 4 Immutable Bundle' } elseif ($isPhase3) { 'CrossFM Phase 3 Immutable Bundle' } elseif ($isPhase275) { 'CrossFM Phase 2.75 Immutable Bundle' } elseif ($isPhase25) { 'CrossFM Phase 2.5 Immutable Bundle' } elseif ($isPhase2) { 'CrossFM Phase 2 Immutable Bundle' } else { 'CrossFM Phase 1 Immutable Bundle' }
-    id = if ($isPhase51) { 'tuktuai/crossfm-phase51-bundle' } elseif ($isPhase5) { 'tuktuai/crossfm-phase5-bundle' } elseif ($isPhase4) { 'tuktuai/crossfm-phase4-bundle' } elseif ($isPhase3) { 'tuktuai/crossfm-phase3-bundle' } elseif ($isPhase275) { 'tuktuai/crossfm-phase275-bundle' } elseif ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }
+    title = if ($isPhase52) { 'CrossFM Phase 5.2 Immutable Bundle' } elseif ($isPhase51) { 'CrossFM Phase 5.1 Immutable Bundle' } elseif ($isPhase5) { 'CrossFM Phase 5 Immutable Bundle' } elseif ($isPhase4) { 'CrossFM Phase 4 Immutable Bundle' } elseif ($isPhase3) { 'CrossFM Phase 3 Immutable Bundle' } elseif ($isPhase275) { 'CrossFM Phase 2.75 Immutable Bundle' } elseif ($isPhase25) { 'CrossFM Phase 2.5 Immutable Bundle' } elseif ($isPhase2) { 'CrossFM Phase 2 Immutable Bundle' } else { 'CrossFM Phase 1 Immutable Bundle' }
+    id = if ($isPhase52) { 'tuktuai/crossfm-phase52-bundle' } elseif ($isPhase51) { 'tuktuai/crossfm-phase51-bundle' } elseif ($isPhase5) { 'tuktuai/crossfm-phase5-bundle' } elseif ($isPhase4) { 'tuktuai/crossfm-phase4-bundle' } elseif ($isPhase3) { 'tuktuai/crossfm-phase3-bundle' } elseif ($isPhase275) { 'tuktuai/crossfm-phase275-bundle' } elseif ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }
     licenses = @([ordered]@{ name = 'other' })
     isPrivate = $true
 }
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'dataset-metadata.json') ($datasetMetadata | ConvertTo-Json -Depth 4)
-$driverName = if ($isPhase51) { 'kaggle_phase51_driver.py' } elseif ($isPhase5) { 'kaggle_phase5_driver.py' } elseif ($isPhase4) { 'kaggle_phase4_driver.py' } elseif ($Profile -eq 'phase3_dynamic_smoke_vast') { 'vast_phase3_dynamic_driver.py' } elseif ($isPhase3) { 'kaggle_phase3_driver.py' } elseif ($isPhase2) { 'kaggle_phase2_driver.py' } else { 'kaggle_driver.py' }
+$driverName = if ($isPhase52) { 'kaggle_phase52_driver.py' } elseif ($isPhase51) { 'kaggle_phase51_driver.py' } elseif ($isPhase5) { 'kaggle_phase5_driver.py' } elseif ($isPhase4) { 'kaggle_phase4_driver.py' } elseif ($Profile -eq 'phase3_dynamic_smoke_vast') { 'vast_phase3_dynamic_driver.py' } elseif ($isPhase3) { 'kaggle_phase3_driver.py' } elseif ($isPhase2) { 'kaggle_phase2_driver.py' } else { 'kaggle_driver.py' }
 Copy-Item -LiteralPath (Join-Path $repo "scripts\$driverName") -Destination (Join-Path $kernelDir.FullName 'driver.py')
 $kernelMetadata = [ordered]@{
     id = "tuktuai/$KernelSlug"
@@ -81,7 +82,7 @@ $kernelMetadata = [ordered]@{
     enable_gpu = $true
     enable_internet = $true
     machine_shape = 'NvidiaTeslaT4'
-    dataset_sources = @($(if ($isPhase51) { 'tuktuai/crossfm-phase51-bundle' } elseif ($isPhase5) { 'tuktuai/crossfm-phase5-bundle' } elseif ($isPhase4) { 'tuktuai/crossfm-phase4-bundle' } elseif ($isPhase3) { 'tuktuai/crossfm-phase3-bundle' } elseif ($isPhase275) { 'tuktuai/crossfm-phase275-bundle' } elseif ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }))
+    dataset_sources = @($(if ($isPhase52) { 'tuktuai/crossfm-phase52-bundle' } elseif ($isPhase51) { 'tuktuai/crossfm-phase51-bundle' } elseif ($isPhase5) { 'tuktuai/crossfm-phase5-bundle' } elseif ($isPhase4) { 'tuktuai/crossfm-phase4-bundle' } elseif ($isPhase3) { 'tuktuai/crossfm-phase3-bundle' } elseif ($isPhase275) { 'tuktuai/crossfm-phase275-bundle' } elseif ($isPhase25) { 'tuktuai/crossfm-phase25-bundle' } elseif ($isPhase2) { 'tuktuai/crossfm-phase2-bundle' } else { 'tuktuai/crossfm-phase1-bundle' }))
     competition_sources = @()
     kernel_sources = @()
     model_sources = @()

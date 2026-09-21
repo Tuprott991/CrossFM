@@ -5,6 +5,7 @@ from crossfm.phase3_dynamic import DynamicEvidenceBridge
 from crossfm.phase4 import CrossFMCorrectiveLoop
 from crossfm.phase5 import CrossFMShortcutAudit, fixed_router_predict
 from crossfm.phase51 import StructuredPosteriorBridge
+from crossfm.phase52 import AnalyticallyAnchoredResidualRouter, response_bank_oracle
 
 
 def _item(
@@ -222,3 +223,60 @@ def test_phase51_training_preserves_exact_identity_contract():
     assert report["exact_zero_identity"] is True
     assert report["max_gradient_norm"] > 0
     assert np.isfinite(report["validation_loss"])
+
+
+def test_phase52_zero_initialized_arplus_starts_at_analytical_router():
+    import torch
+
+    packed = pack_cache([_item("p52-c0", 0.9), _item("p52-c1", 0.8)], "cpu")
+    model = AnalyticallyAnchoredResidualRouter(12, 8, 4, "cpu", 71)
+    anchored, traces = model.module(packed, "full")
+    with torch.inference_mode():
+        analytical, _, _ = fixed_router_predict(packed, "analytic")
+    assert np.allclose(anchored.detach().numpy().reshape(-1), analytical, atol=1e-6)
+    assert float(traces["route_scale"][0]) == 0.0
+    assert float(traces["reliability_scale"][0]) == 0.0
+    assert model.trainable_params < 5_000_000
+
+
+def test_phase52_exact_bypass_survives_learned_residuals():
+    packed = pack_cache([_item("p52-a", 0.0, routed=False)], "cpu")
+    model = AnalyticallyAnchoredResidualRouter(12, 8, 4, "cpu", 73)
+    model.module.route_scale.data.fill_(0.9)
+    model.module.reliability_scale.data.fill_(0.9)
+    probability, _ = model.module(packed, "full")
+    assert np.array_equal(probability.detach().numpy()[0], packed["llm_probability"].numpy()[0])
+
+
+def test_phase52_response_features_and_anchor_are_ablatable():
+    import torch
+
+    packed = pack_cache([_item("p52-r0", 0.9), _item("p52-r1", 0.8)], "cpu")
+    packed["route_view_prior"].zero_()
+    packed["route_view_prior"][:, :5] = packed["route_view_prior"].new_tensor(
+        [0.70, 0.10, 0.08, 0.07, 0.05],
+    )
+    model = AnalyticallyAnchoredResidualRouter(12, 8, 4, "cpu", 79)
+    model.module.route_scale.data.fill_(0.7)
+    model.module.reliability_scale.data.fill_(0.7)
+    full, _ = model.module(packed, "full")
+    shuffled, _ = model.module(packed, "shuffle_response")
+    no_anchor, _ = model.module(packed, "no_anchor")
+    assert not torch.allclose(full, shuffled)
+    assert not torch.allclose(full, no_anchor)
+
+
+def test_phase52_training_updates_regularized_residual_and_oracle_is_a_ceiling():
+    items = [_item(f"p52-train-{index}", 0.9) for index in range(4)]
+    packed = pack_cache(items, "cpu")
+    model = AnalyticallyAnchoredResidualRouter(12, 8, 4, "cpu", 83)
+    report = model.fit(
+        packed, packed, mode="full", epochs=3, batch_size=2, learning_rate=1e-2,
+        patience=3, anchor_kl=0.02, correction_l2=0.001,
+    )
+    probability, labels, traces = model.predict(packed, 2, "full")
+    oracle, oracle_labels, oracle_traces = response_bank_oracle(packed)
+    assert report["max_gradient_norm"] > 0
+    assert np.isfinite(report["validation_loss"])
+    assert probability.shape == labels.shape == oracle.shape == oracle_labels.shape == (16,)
+    assert traces["weights"].shape == oracle_traces["weights"].shape == (4, 4, 17)

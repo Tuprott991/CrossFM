@@ -1,0 +1,91 @@
+experiment:
+  protocol_id: crossfm-phase5.2-analytically-anchored-residual-exploratory-v1
+  classification: exploratory_non_confirmatory
+  test_seeds: [14701, 14702, 14703, 14704, 14705]
+  regimes: [A, B, C2]
+  methods:
+    - analytic_router
+    - arplus_temperature
+    - arplus_full
+    - arplus_route_only
+    - arplus_reliability_only
+    - arplus_shuffle_response
+    - arplus_no_anchor
+    - structured_smr_r2
+    - response_bank_oracle
+data:
+  train:
+    seed: 14101
+    episodes: {A: 8, B: 8, C2: 128}
+    queries_per_episode: 8
+    alias_split: train
+    mechanism_split: train
+  validation:
+    seed: 14201
+    episodes: {A: 4, B: 4, C2: 32}
+    queries_per_episode: 8
+    alias_split: validation
+    mechanism_split: validation
+  test:
+    episodes: {A: 10, B: 10, C2: 80}
+    queries_per_episode: 8
+    alias_split: test
+    mechanism_split: test
+models:
+  llm:
+    id: Qwen/Qwen2.5-1.5B-Instruct
+    revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    dtype: float16
+  specialist:
+    id: jingang/TabICL
+    package: tabicl==2.2.0
+    revision: 4dcd344ece2c00be9e831fdd35bed57b5ad83e19
+    source_revision: 0dbff3ec8fc68c123c87af77b0ea8b25cd2d23f3
+    checkpoint: tabicl-classifier-v2-20260212.ckpt
+training:
+  seed: 14901
+  max_trainable_params: 5000000
+  hidden_dim: 256
+  response_hidden_dim: 32
+  epochs: 120
+  patience: 20
+  episode_batch_size: 8
+  learning_rate: 0.0003
+  primary_objective: analytically_anchored_response_reliability
+regularization:
+  anchor_kl: 0.02
+  correction_l2: 0.001
+routing:
+  fallback_threshold: 0.10
+  states: 16
+  representation: continuous_posterior
+  analytical_anchor: immutable
+  residual_bypass: exact
+audit:
+  auxiliary_prediction_head: forbidden
+  analytical_anchor_available: true
+  residual_initialization: zero
+  semantic_temperature: 0.10
+  response_bank_oracle_label_access: diagnostic_only
+  train_validation_llm_probabilities: cached
+runtime:
+  expected_gpus: 2
+  gpu_family: NVIDIA Tesla T4
+  llm_batch_size: 2
+  torch_dtype: float16
+  attention: sdpa
+  cpu_threads_per_worker: 2
+  cache: single_shared_in_memory_gpu_backbone_cache
+source:
+  git_commit: BUILD_TIME
+  dirty: BUILD_TIME
+gate:
+  a_accuracy_min: 0.98
+  b_accuracy_min: 0.87
+  accuracy_gain_min: 0.005
+  logloss_gain_min: 0.01
+  anchor_margin: 0.05
+  response_margin: 0.01
+  smr_margin: 0.05
+  route_accuracy_min: 0.95
+  oracle_gap_max: 0.05

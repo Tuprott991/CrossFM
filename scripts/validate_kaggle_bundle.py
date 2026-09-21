@@ -108,7 +108,8 @@ def main() -> None:
         if "smoke" not in config["experiment"]["protocol_id"]:
             assert len(config["experiment"]["test_seeds"]) == 5
             assert sum(int(value) for value in config["data"]["test"]["episodes"].values()) == 100
-    if config["experiment"]["protocol_id"].startswith("crossfm-phase5") and not config["experiment"]["protocol_id"].startswith("crossfm-phase5.1"):
+    if (config["experiment"]["protocol_id"].startswith("crossfm-phase5")
+            and not config["experiment"]["protocol_id"].startswith(("crossfm-phase5.1", "crossfm-phase5.2"))):
         assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
         assert set(config["experiment"]["methods"]) == {
             "analytic_router", "semantic_cosine_router", "prior_start_r1", "prior_start_r2",
@@ -141,6 +142,33 @@ def main() -> None:
         assert config["audit"]["route_view_prior_access_for_learned_methods"] == "forbidden"
         assert config["audit"]["zero_message_identity"] == "bitwise"
         assert config["audit"]["no_new_information_depth_saturation"] == "bitwise"
+        assert int(config["training"]["max_trainable_params"]) <= 5_000_000
+        assert config["runtime"]["cache"] == "single_shared_in_memory_gpu_backbone_cache"
+    if config["experiment"]["protocol_id"].startswith("crossfm-phase5.2"):
+        assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
+        assert set(config["experiment"]["methods"]) == {
+            "analytic_router", "arplus_temperature", "arplus_full", "arplus_route_only",
+            "arplus_reliability_only", "arplus_shuffle_response", "arplus_no_anchor",
+            "structured_smr_r2", "response_bank_oracle",
+        }
+        assert len(config["experiment"]["test_seeds"]) == 5
+        assert sum(int(value) for value in config["data"]["test"]["episodes"].values()) == 100
+        prior_seeds = {
+            10701, 10702, 10703, 10704, 10705,
+            12701, 12702, 12703, 12704, 12705,
+            13701, 13702, 13703, 13704, 13705,
+        }
+        assert not set(config["experiment"]["test_seeds"]) & prior_seeds
+        assert config["routing"] == {
+            "fallback_threshold": 0.10,
+            "states": 16,
+            "representation": "continuous_posterior",
+            "analytical_anchor": "immutable",
+            "residual_bypass": "exact",
+        }
+        assert config["audit"]["auxiliary_prediction_head"] == "forbidden"
+        assert config["audit"]["residual_initialization"] == "zero"
+        assert config["audit"]["response_bank_oracle_label_access"] == "diagnostic_only"
         assert int(config["training"]["max_trainable_params"]) <= 5_000_000
         assert config["runtime"]["cache"] == "single_shared_in_memory_gpu_backbone_cache"
     assert (kernel / kernel_metadata["code_file"]).is_file()
