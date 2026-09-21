@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#161616"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#777"/>
+    </marker>
+    <style>
+      .title{font: 30px Georgia,serif;fill:#111}
+      .subtitle{font: 15px Helvetica,Arial,sans-serif;fill:#555}
+      .head{font:700 20px Helvetica,Arial,sans-serif;fill:#111}
+      .label{font:15px Helvetica,Arial,sans-serif;fill:#222}
+      .small{font:12px Helvetica,Arial,sans-serif;fill:#555}
+      .tiny{font:10px Helvetica,Arial,sans-serif;fill:#555}
+      .num{font:700 22px Helvetica,Arial,sans-serif;fill:#222}
+      .box{stroke:#161616;stroke-width:2.5}
+      .arrow{fill:none;stroke:#161616;stroke-width:2.5;marker-end:url(#arrow)}
+      .guide{fill:none;stroke:#aaa;stroke-width:1.5;stroke-dasharray:5 5}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="#fff"/>
+
+  <text x="800" y="48" text-anchor="middle" class="title">CrossFM-Align: Posterior–Codebook–Residual Routing</text>
+  <text x="800" y="78" text-anchor="middle" class="subtitle">Uncertainty is preserved from statistical sensing to semantic view selection and fallback control</text>
+
+  <line x1="520" y1="112" x2="520" y2="790" stroke="#ddd" stroke-width="2"/>
+  <line x1="1080" y1="112" x2="1080" y2="790" stroke="#ddd" stroke-width="2"/>
+
+  <!-- Panel 1 -->
+  <circle cx="72" cy="132" r="22" fill="#f4f4f4" stroke="#888" stroke-width="2"/>
+  <text x="72" y="140" text-anchor="middle" class="num">1</text>
+  <text x="108" y="140" class="head">Soft statistical state posterior</text>
+  <text x="108" y="164" class="small">Four uncertain evidence channels induce a distribution—not hard bits.</text>
+
+  <text x="75" y="214" class="label" font-weight="700">Evidence logits</text>
+  <g transform="translate(75 238)">
+    <text x="0" y="16" class="label">Marker 1</text>
+    <line x1="100" y1="10" x2="350" y2="10" stroke="#bbb" stroke-width="8" stroke-linecap="round"/>
+    <line x1="225" y1="10" x2="329" y2="10" stroke="#6da86a" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="329" cy="10" r="8" fill="#6da86a" stroke="#111" stroke-width="1.5"/>
+    <text x="370" y="16" class="small">+0.83</text>
+
+    <text x="0" y="70" class="label">Marker 2</text>
+    <line x1="100" y1="64" x2="350" y2="64" stroke="#bbb" stroke-width="8" stroke-linecap="round"/>
+    <line x1="225" y1="64" x2="150" y2="64" stroke="#df7777" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="150" cy="64" r="8" fill="#df7777" stroke="#111" stroke-width="1.5"/>
+    <text x="370" y="70" class="small">−0.60</text>
+
+    <text x="0" y="124" class="label">Marker 3</text>
+    <line x1="100" y1="118" x2="350" y2="118" stroke="#bbb" stroke-width="8" stroke-linecap="round"/>
+    <line x1="225" y1="118" x2="240" y2="118" stroke="#e4bc42" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="240" cy="118" r="8" fill="#e4bc42" stroke="#111" stroke-width="1.5"/>
+    <text x="370" y="124" class="small">+0.12</text>
+
+    <text x="0" y="178" class="label">Marker 4</text>
+    <line x1="100" y1="172" x2="350" y2="172" stroke="#bbb" stroke-width="8" stroke-linecap="round"/>
+    <line x1="225" y1="172" x2="302" y2="172" stroke="#6da86a" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="302" cy="172" r="8" fill="#6da86a" stroke="#111" stroke-width="1.5"/>
+    <text x="370" y="178" class="small">+0.62</text>
+    <text x="100" y="207" class="tiny">negative</text>
+    <text x="350" y="207" text-anchor="end" class="tiny">positive</text>
+  </g>
+
+  <path d="M270 455 L270 493" class="arrow"/>
+  <rect x="145" y="500" width="250" height="48" rx="7" fill="#f6d8ae" class="box"/>
+  <text x="270" y="530" text-anchor="middle" class="label" font-weight="700">Joint uncertainty mapping</text>
+  <path d="M270 548 L270 586" class="arrow"/>
+
+  <text x="75" y="606" class="label" font-weight="700">Posterior over 16 regimes</text>
+  <line x1="76" y1="720" x2="472" y2="720" stroke="#222" stroke-width="1.5"/>
+  <g fill="#a9cda6" stroke="#4f704c" stroke-width="1">
+    <rect x="82"  y="704" width="16" height="16"/><rect x="106" y="696" width="16" height="24"/>
+    <rect x="130" y="707" width="16" height="13"/><rect x="154" y="681" width="16" height="39"/>
+    <rect x="178" y="690" width="16" height="30"/><rect x="202" y="650" width="16" height="70"/>
+    <rect x="226" y="677" width="16" height="43"/><rect x="250" y="620" width="16" height="100"/>
+    <rect x="274" y="638" width="16" height="82"/><rect x="298" y="682" width="16" height="38"/>
+    <rect x="322" y="704" width="16" height="16"/><rect x="346" y="692" width="16" height="28"/>
+    <rect x="370" y="709" width="16" height="11"/><rect x="394" y="701" width="16" height="19"/>
+    <rect x="418" y="712" width="16" height="8"/><rect x="442" y="708" width="16" height="12"/>
+  </g>
+  <text x="90" y="742" text-anchor="middle" class="tiny">1</text>
+  <text x="258" y="742" text-anchor="middle" class="tiny">8</text>
+  <text x="450" y="742" text-anchor="middle" class="tiny">16</text>
+  <rect x="128" y="758" width="285" height="28" rx="14" fill="#fff" stroke="#777" stroke-width="1.5"/>
+  <text x="270" y="777" text-anchor="middle" class="small" font-weight="700">NO ARGMAX · NO DISCRETE FORWARD PASS</text>
+
+  <!-- Panel 2 -->
+  <circle cx="567" cy="132" r="22" fill="#f4f4f4" stroke="#888" stroke-width="2"/>
+  <text x="567" y="140" text-anchor="middle" class="num">2</text>
+  <text x="603" y="140" class="head">Semantic codebook marginalization</text>
+  <text x="603" y="164" class="small">Every plausible state votes for compatible feature views.</text>
+
+  <text x="555" y="214" class="label" font-weight="700">Soft posterior</text>
+  <text x="755" y="214" class="label" font-weight="700">State-to-view codebook</text>
+  <text x="943" y="214" class="small">six candidate views</text>
+
+  <g transform="translate(570 235)">
+    <rect width="48" height="288" rx="5" fill="#fff" stroke="#111" stroke-width="2"/>
+    <g fill="#a9cda6">
+      <rect x="6" y="7" width="10" height="8"/><rect x="6" y="25" width="16" height="8"/>
+      <rect x="6" y="43" width="8" height="8"/><rect x="6" y="61" width="22" height="8"/>
+      <rect x="6" y="79" width="17" height="8"/><rect x="6" y="97" width="34" height="8"/>
+      <rect x="6" y="115" width="23" height="8"/><rect x="6" y="133" width="40" height="8"/>
+      <rect x="6" y="151" width="36" height="8"/><rect x="6" y="169" width="21" height="8"/>
+      <rect x="6" y="187" width="9" height="8"/><rect x="6" y="205" width="16" height="8"/>
+      <rect x="6" y="223" width="7" height="8"/><rect x="6" y="241" width="11" height="8"/>
+      <rect x="6" y="259" width="5" height="8"/><rect x="6" y="277" width="7" height="8"/>
+    </g>
+  </g>
+  <text x="650" y="390" text-anchor="middle" class="num">×</text>
+
+  <g transform="translate(700 235)">
+    <rect width="300" height="288" fill="#fff" stroke="#111" stroke-width="2"/>
+    <g stroke="#ddd" stroke-width="1">
+      <path d="M50 0V288 M100 0V288 M150 0V288 M200 0V288 M250 0V288"/>
+      <path d="M0 18H300 M0 36H300 M0 54H300 M0 72H300 M0 90H300 M0 108H300 M0 126H300 M0 144H300 M0 162H300 M0 180H300 M0 198H300 M0 216H300 M0 234H300 M0 252H300 M0 270H300"/>
+    </g>
+    <g fill="#f5f2c6">
+      <rect x="1" y="1" width="48" height="16"/><rect x="101" y="1" width="48" height="16"/>
+      <rect x="51" y="19" width="48" height="16"/><rect x="201" y="19" width="48" height="16"/>
+      <rect x="101" y="37" width="48" height="16"/><rect x="251" y="37" width="48" height="16"/>
+      <rect x="1" y="55" width="48" height="16"/><rect x="151" y="55" width="48" height="16"/>
+      <rect x="51" y="73" width="48" height="16"/><rect x="251" y="73" width="48" height="16"/>
+      <rect x="101" y="91" width="48" height="16"/><rect x="201" y="91" width="48" height="16"/>
+      <rect x="1" y="109" width="48" height="16"/><rect x="201" y="109" width="48" height="16"/>
+      <rect x="51" y="127" width="48" height="16"/><rect x="151" y="127" width="48" height="16"/>
+      <rect x="101" y="145" width="48" height="16"/><rect x="251" y="145" width="48" height="16"/>
+      <rect x="1" y="163" width="48" height="16"/><rect x="151" y="163" width="48" height="16"/>
+      <rect x="51" y="181" width="48" height="16"/><rect x="201" y="181" width="48" height="16"/>
+      <rect x="101" y="199" width="48" height="16"/><rect x="251" y="199" width="48" height="16"/>
+      <rect x="1" y="217" width="48" height="16"/><rect x="201" y="217" width="48" height="16"/>
+      <rect x="51" y="235" width="48" height="16"/><rect x="151" y="235" width="48" height="16"/>
+      <rect x="101" y="253" width="48" height="16"/><rect x="251" y="253" width="48" height="16"/>
+      <rect x="1" y="271" width="48" height="16"/><rect x="151" y="271" width="48" height="16"/>
+    </g>
+  </g>
+  <text x="850" y="550" text-anchor="middle" class="small">disclosed semantic compatibility map</text>
+  <rect x="650" y="590" width="400" height="62" rx="8" fill="#f6d8ae" class="box"/>
+  <text x="850" y="616" text-anchor="middle" class="label" font-weight="700">Posterior-weighted codebook aggregation</text>
+  <text x="850" y="638" text-anchor="middle" class="small">ambiguous states contribute proportionally</text>
+  <path d="M850 523 L850 583" class="arrow"/>
+  <rect x="700" y="685" width="300" height="58" rx="8" fill="#f5f2c6" class="box"/>
+  <text x="850" y="720" text-anchor="middle" class="label" font-weight="700">Aligned view weights</text>
+  <path d="M850 652 L850 678" class="arrow"/>
+
+  <!-- Panel 3 -->
+  <circle cx="1127" cy="132" r="22" fill="#f4f4f4" stroke="#888" stroke-width="2"/>
+  <text x="1127" y="140" text-anchor="middle" class="num">3</text>
+  <text x="1163" y="140" class="head">Soft routing with preservation</text>
+  <text x="1163" y="164" class="small">View attention acts only when statistical evidence is trustworthy.</text>
+
+  <text x="1120" y="214" class="label" font-weight="700">Candidate-view attention</text>
+  <g transform="translate(1120 240)">
+    <text x="0" y="16" class="small">View A</text><rect x="80" y="3" width="315" height="18" rx="4" fill="#eee"/><rect x="80" y="3" width="63" height="18" rx="4" fill="#efb66e"/>
+    <text x="0" y="60" class="small">View B</text><rect x="80" y="47" width="315" height="18" rx="4" fill="#eee"/><rect x="80" y="47" width="214" height="18" rx="4" fill="#efb66e"/>
+    <text x="0" y="104" class="small">View C</text><rect x="80" y="91" width="315" height="18" rx="4" fill="#eee"/><rect x="80" y="91" width="126" height="18" rx="4" fill="#efb66e"/>
+    <text x="0" y="148" class="small">View D</text><rect x="80" y="135" width="315" height="18" rx="4" fill="#eee"/><rect x="80" y="135" width="277" height="18" rx="4" fill="#efb66e"/>
+    <text x="0" y="192" class="small">View E</text><rect x="80" y="179" width="315" height="18" rx="4" fill="#eee"/><rect x="80" y="179" width="38" height="18" rx="4" fill="#efb66e"/>
+    <text x="0" y="236" class="small">View F</text><rect x="80" y="223" width="315" height="18" rx="4" fill="#eee"/><rect x="80" y="223" width="95" height="18" rx="4" fill="#efb66e"/>
+  </g>
+
+  <path d="M1320 500 L1320 540" class="arrow"/>
+  <rect x="1140" y="548" width="360" height="72" rx="8" fill="#c9e7f2" class="box"/>
+  <text x="1320" y="578" text-anchor="middle" class="label" font-weight="700">Weighted TFM response bank</text>
+  <text x="1320" y="601" text-anchor="middle" class="small">combine candidate-view predictions</text>
+
+  <path d="M1320 620 L1320 660" class="arrow"/>
+  <rect x="1120" y="668" width="400" height="72" rx="8" fill="#f5f2c6" class="box"/>
+  <text x="1320" y="698" text-anchor="middle" class="label" font-weight="700">Residual preservation gate</text>
+  <text x="1320" y="721" text-anchor="middle" class="small">weak evidence → delegate authority to LLM</text>
+
+  <path d="M1320 740 L1320 778" class="arrow"/>
+  <rect x="1195" y="786" width="250" height="54" rx="8" fill="#d8ead5" class="box"/>
+  <text x="1320" y="819" text-anchor="middle" class="label" font-weight="700">Final prediction</text>
+
+  <!-- Cross-panel arrows -->
+  <path d="M458 670 C500 670 522 625 560 625" class="arrow"/>
+  <text x="512" y="651" text-anchor="middle" class="small">p(state)</text>
+  <path d="M1000 714 C1055 714 1068 320 1112 320" class="arrow"/>
+  <text x="1050" y="532" text-anchor="middle" class="small">view weights</text>
+
+  <!-- Bottom takeaway -->
+  <rect x="430" y="852" width="740" height="34" rx="17" fill="#fff" stroke="#777" stroke-width="1.5"/>
+  <text x="800" y="874" text-anchor="middle" class="small" font-weight="700">SOFT UNCERTAINTY IS PRESERVED END-TO-END · THE CODEBOOK ALIGNS VIEWS · THE RESIDUAL GATE PREVENTS DESTRUCTIVE ROUTING</text>
+</svg>
