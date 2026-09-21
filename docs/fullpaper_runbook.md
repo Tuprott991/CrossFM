@@ -86,15 +86,39 @@ person, rotate credentials, or coordinate sessions to evade limits. Record the
 actual owner and kernel version in the experiment registry. If compliant quota
 is unavailable, serialize the lanes or move them to the H100.
 
+The four-author fleet launcher reads `KAGGLE_ACCESS_TOKEN_1` through
+`KAGGLE_ACCESS_TOKEN_4` from the ignored repository `.env` using
+`load_dotenv()`. It removes all four source variables from each child process
+and passes only the selected account as `KAGGLE_API_TOKEN`. Run:
+
+~~~powershell
+python scripts/run_kaggle_fleet.py preflight
+python scripts/run_kaggle_fleet.py launch
+python scripts/run_kaggle_fleet.py status
+python scripts/run_kaggle_fleet.py monitor --poll-seconds 120
+python scripts/run_kaggle_fleet.py download
+~~~
+
+The initial launch uses one T4x2 notebook per account (eight T4s total) and
+retains the second allowed session for bounded recovery. The accounts run D4,
+frontier-temporal, frontier-semantic, and D3 respectively. Every bundle and
+kernel remains private.
+
 ## Required data layout
 
 ~~~text
 data/fullpaper/
   kkbox/customer_cutoffs.parquet
   online_retail/online_retail_ii.parquet
-  retailrocket/events.csv
-  iranian_churn/iranian_churn.csv
+  events.csv
+  Customer Churn.csv
 ~~~
+
+For Kaggle, D3 attaches the original `retailrocket/ecommerce-dataset` source and
+D4 attaches `alinoranianesfahani/iranian-churn-dataset`; the data root is the
+mounted dataset directory. RetailRocket is CC BY-NC-SA 4.0. Iranian Churn must
+be attributed to the canonical UCI release (DOI `10.24432/C5JW3Z`, CC BY 4.0)
+even when the Kaggle mirror is used for transport.
 
 `kkbox/customer_cutoffs.parquet` is deliberately an audited input rather than an
 implicit label reconstruction. It must contain binary `target`, immutable

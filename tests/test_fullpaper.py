@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -21,6 +23,13 @@ from crossfm.fullpaper.synthetic_stress import StressCell, simulate_cell
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FLEET_SPEC = importlib.util.spec_from_file_location(
+    "run_kaggle_fleet", ROOT / "scripts" / "run_kaggle_fleet.py",
+)
+assert FLEET_SPEC and FLEET_SPEC.loader
+FLEET = importlib.util.module_from_spec(FLEET_SPEC)
+sys.modules[FLEET_SPEC.name] = FLEET
+FLEET_SPEC.loader.exec_module(FLEET)
 
 
 def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
@@ -167,3 +176,14 @@ def test_arplus_global_selection_uses_validation_not_test_metrics():
         "selection": {"mean_logloss_gain": 0.01, "max_dataset_degradation": 0.005},
     })
     assert selection["arplus_selected"] is True
+
+
+def test_kaggle_fleet_has_four_distinct_accounts_profiles_and_private_token_env(monkeypatch):
+    assert {lane.account for lane in FLEET.LANES} == {1, 2, 3, 4}
+    assert len({lane.profile for lane in FLEET.LANES}) == 4
+    assert len({lane.kernel_slug for lane in FLEET.LANES}) == 4
+    monkeypatch.setenv("KAGGLE_ACCESS_TOKEN_1", "must-not-propagate")
+    monkeypatch.setenv("KAGGLE_ACCESS_TOKEN_4", "must-not-propagate")
+    child = FLEET._safe_env("selected-token")
+    assert child["KAGGLE_API_TOKEN"] == "selected-token"
+    assert all(not key.startswith("KAGGLE_ACCESS_TOKEN_") for key in child)

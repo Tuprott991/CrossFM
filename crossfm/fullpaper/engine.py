@@ -139,8 +139,6 @@ class FullPaperEngine:
         bundle = self.dataset(task.dataset)
         train_idx, validation_idx, test_idx = self._slice(bundle, task)
         fit_idx, router_idx = _router_split(train_idx, bundle.target.to_numpy(), task.seed)
-        static_llm = task.method == "cache_llm"
-        llm_train_indices = bundle.splits["train"] if static_llm else router_idx
         views = candidate_views(bundle.frame, self.config["datasets"][task.dataset])
         router_bank, validation_bank, test_bank, metadata = [], [], [], {}
         backend = method["backend"]
@@ -179,6 +177,8 @@ class FullPaperEngine:
         bundle = self.dataset(task.dataset)
         train_idx, validation_idx, test_idx = self._slice(bundle, task)
         fit_idx, router_idx = _router_split(train_idx, bundle.target.to_numpy(), task.seed)
+        static_llm = task.method == "cache_llm"
+        llm_train_indices = bundle.splits["train"] if static_llm else router_idx
         dataset_spec = self.config["datasets"][task.dataset]
         accelerator = self.config["profiles"][task.profile]["accelerator"]
         dtype = "float16" if accelerator == "kaggle_t4x2" else method.get("dtype", "bfloat16")

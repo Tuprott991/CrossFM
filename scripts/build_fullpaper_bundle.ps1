@@ -62,7 +62,8 @@ $configHash = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash.T
 $bundleSlug = "crossfm-$safeProfile-bundle".ToLowerInvariant()
 $runId = "$($profileInfo.protocol)-$safeProfile-$($commit.Substring(0, 8))"
 $dependencies = @(
-    'numpy==1.26.4', 'pandas==2.2.3', 'PyYAML==6.0.2', 'scikit-learn==1.6.1',
+    'numpy==1.26.4', 'pandas==2.2.3', 'python-dotenv==1.0.1',
+    'PyYAML==6.0.2', 'scikit-learn==1.6.1',
     'pyarrow==18.1.0', 'openpyxl==3.1.5', 'tabicl==2.2.0',
     'transformers==4.57.6', 'huggingface-hub==0.36.0', 'safetensors==0.7.0'
 )

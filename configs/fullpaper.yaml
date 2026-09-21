@@ -66,7 +66,9 @@ datasets:
       product_breadth: {patterns: [unique_items]}
   d3_retailrocket:
     loader: retailrocket
-    files: {events: retailrocket/events.csv}
+    files: {events: events.csv}
+    kaggle_source: retailrocket/ecommerce-dataset
+    license: CC-BY-NC-SA-4.0
     target_mode: engagement
     history_days: 90
     split: temporal
@@ -81,7 +83,10 @@ datasets:
       funnel: {patterns: [view, addtocart, transaction]}
   d4_iranian_churn:
     loader: manifest_table
-    files: {table: iranian_churn/iranian_churn.csv}
+    files: {table: "Customer Churn.csv"}
+    kaggle_source: alinoranianesfahani/iranian-churn-dataset
+    canonical_source: https://doi.org/10.24432/C5JW3Z
+    license: CC-BY-4.0
     target_column: Churn
     split: iid
     split_seed: 1701
