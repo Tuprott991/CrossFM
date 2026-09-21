@@ -86,7 +86,7 @@ $manifest = [ordered]@{
 }
 Write-Utf8NoBom (Join-Path $datasetDir.FullName 'bundle_manifest.json') ($manifest | ConvertTo-Json -Depth 6)
 $datasetMetadata = [ordered]@{
-    title = "CrossFM Full Paper $Profile Immutable Bundle"
+    title = "CrossFM $Profile"
     id = "$KaggleOwner/$bundleSlug"
     licenses = @([ordered]@{ name = 'other' })
     isPrivate = $true

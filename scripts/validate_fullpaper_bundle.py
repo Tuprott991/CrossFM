@@ -25,6 +25,8 @@ def main() -> None:
     manifest = json.loads((dataset / "bundle_manifest.json").read_text())
     data_metadata = json.loads((dataset / "dataset-metadata.json").read_text(encoding="utf-8-sig"))
     kernel_metadata = json.loads((kernel / "kernel-metadata.json").read_text(encoding="utf-8-sig"))
+    assert 6 <= len(data_metadata["title"]) <= 50
+    assert 6 <= len(kernel_metadata["title"]) <= 50
     for kind in ("wheel", "config"):
         path = dataset / manifest[kind]["name"]
         assert path.is_file() and path.stat().st_size == manifest[kind]["bytes"]
