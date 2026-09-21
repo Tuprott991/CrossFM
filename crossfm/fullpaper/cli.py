@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict
+import json
+import os
+from pathlib import Path
+import platform
+import shutil
+import sys
+import traceback
+
+from .aggregate import aggregate_run
+from .artifacts import atomic_json
+from .engine import FullPaperEngine, execute_task
+from .models import configure_h100_math
+from .protocol import balanced_shards, load_protocol, tasks_for_profile
+
+
+def _device(accelerator: str) -> str:
+    if accelerator == "cpu":
+        return "cpu"
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError("GPU profile requires PyTorch") from exc
+    if not torch.cuda.is_available():
+        raise RuntimeError("GPU profile requested but CUDA is unavailable")
+    return "cuda:0"
+
+
+def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
+    spec = config["profiles"][profile]
+    report = {
+        "status": "complete", "profile": profile, "accelerator": spec["accelerator"],
+        "python": sys.version, "platform": platform.platform(),
+        "disk_free_bytes": shutil.disk_usage(output.parent if output.parent.exists() else Path.cwd()).free,
+        "data_root": str(data_root.resolve()), "data_root_exists": data_root.exists(),
+    }
+    missing_files = []
+    for dataset_id in spec.get("datasets", []):
+        dataset_spec = config["datasets"][dataset_id]
+        if dataset_spec["loader"] != "beyondarena":
+            for relative in dataset_spec.get("files", {}).values():
+                if not (data_root / relative).is_file():
+                    missing_files.append(str(data_root / relative))
+    report["missing_data_files"] = missing_files
+    if missing_files:
+        raise FileNotFoundError(f"Missing required dataset files: {missing_files}")
+    if spec["accelerator"] != "cpu":
+        import torch
+
+        if spec["accelerator"] == "h100_80gb":
+            configure_h100_math()
+        report.update({
+            "torch": torch.__version__, "cuda": torch.version.cuda,
+            "gpu_count_visible": torch.cuda.device_count(),
+            "gpus": [{
+                "name": torch.cuda.get_device_properties(index).name,
+                "memory_bytes": torch.cuda.get_device_properties(index).total_memory,
+            } for index in range(torch.cuda.device_count())],
+        })
+        x = torch.ones((16, 16), device="cuda", dtype=(
+            torch.bfloat16 if spec["accelerator"] == "h100_80gb" else torch.float16
+        ))
+        report["tiny_forward_sum"] = float((x @ x).float().sum().cpu())
+        names = [gpu["name"].lower() for gpu in report["gpus"]]
+        if spec["accelerator"] == "kaggle_t4x2" and (
+            len(names) != 2 or any("t4" not in name for name in names)
+        ):
+            raise RuntimeError(f"Expected two visible T4 GPUs, found {report['gpus']}")
+        if spec["accelerator"] == "h100_80gb" and (
+            len(names) != 1 or "h100" not in names[0]
+            or report["gpus"][0]["memory_bytes"] < 75 * 1024**3
+        ):
+            raise RuntimeError(f"Expected one visible H100 80GB, found {report['gpus']}")
+    atomic_json(output / "doctor.json", report)
+    return report
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="CrossFM-Align full-paper runner")
+    parser.add_argument("command", choices=("plan", "doctor", "run-worker", "aggregate"))
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--profile", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--data-root", type=Path, default=Path("data/fullpaper"))
+    parser.add_argument("--rank", type=int, default=0)
+    parser.add_argument("--world-size", type=int, default=1)
+    parser.add_argument("--stage")
+    parser.add_argument("--wheel-sha256", default="local")
+    args = parser.parse_args()
+    config = load_protocol(args.config)
+    tasks = tasks_for_profile(config, args.profile)
+    if args.stage:
+        tasks = [task for task in tasks if task.stage == args.stage]
+    args.output.mkdir(parents=True, exist_ok=True)
+    if args.command == "plan":
+        shards = balanced_shards(tasks, args.world_size)
+        value = {
+            "profile": args.profile, "tasks": len(tasks),
+            "stages": sorted({task.stage for task in tasks}),
+            "shards": [[asdict(task) for task in shard] for shard in shards],
+        }
+        atomic_json(args.output / "task_plan.json", value)
+        print(json.dumps({"profile": args.profile, "tasks": len(tasks)}, indent=2))
+        return
+    if args.command == "doctor":
+        print(json.dumps(doctor(config, args.profile, args.output, args.data_root), indent=2))
+        return
+    if args.command == "aggregate":
+        print(json.dumps(aggregate_run(
+            config=config, profile=args.profile,
+            tasks=tasks_for_profile(config, args.profile), output=args.output,
+        ), indent=2))
+        return
+    shard = balanced_shards(tasks, args.world_size)[args.rank]
+    assignment = {
+        "rank": args.rank, "world_size": args.world_size, "stage": args.stage,
+        "task_ids": [task.task_id for task in shard], "estimated_cost": sum(task.cost for task in shard),
+    }
+    atomic_json(args.output / "assignments" / f"{args.stage or 'all'}_rank{args.rank}.json", assignment)
+    engine = FullPaperEngine(
+        config, args.output, args.data_root,
+        _device(config["profiles"][args.profile]["accelerator"]),
+    )
+    counts = {"complete": 0, "reused": 0}
+    for task in shard:
+        status = execute_task(engine, task, args.wheel_sha256)
+        counts[status] += 1
+        print(json.dumps({"task_id": task.task_id, "status": status}), flush=True)
+    atomic_json(args.output / "workers" / f"{args.stage or 'all'}_rank{args.rank}.json", {
+        "status": "complete", **assignment, **counts,
+    })
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(json.dumps({
+            "status": "failed", "error_type": type(exc).__name__, "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }, indent=2), file=sys.stderr)
+        raise

@@ -1,0 +1,17 @@
+numpy==1.26.4
+pandas==2.2.3
+PyYAML==6.0.2
+scikit-learn==1.6.1
+pyarrow==18.1.0
+openpyxl==3.1.5
+tabicl==2.2.0
+transformers==4.57.6
+huggingface-hub==0.36.0
+safetensors==0.7.0
+data-foundry==0.0.5
+catboost==1.2.10
+lightgbm==4.7.0
+xgboost==3.2.0
+tabpfn==9.0.0
+tabm==0.0.3
+autogluon.tabular==1.6.3

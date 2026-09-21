@@ -32,3 +32,26 @@ Phase 2.75 is a separate exploratory interface ablation. It leaves the Phase 2.5
 The completed Phase 2.75 full run validates 90/90 tasks. Soft residual routing exactly preserves A at 1.0000 and retains B at 0.9167 versus 0.9222 for TabICL, but reaches only 0.5000 on C2; the matched hard route reaches 0.5083. The adaptive diagnostic remains at 0.9222. Residual preservation is therefore adopted for Phase 3, while the remaining 42-point C2 gap provides a falsifiable target for recurrent communication.
 
 Phase 3 begins with an engineering/overfit gate for a minimal cached-view CrossFM loop. Frozen Qwen embeddings and TabICL predictions are computed once; the backbones are then unloaded and a shared recurrent bridge performs one or two latent query/evidence rounds entirely from GPU-resident tensors. Test episodes are sharded evenly across both T4s. The comparison includes one round, two rounds, zero messages, and shuffled messages with identical bridge capacity. This cached response-bank implementation is a minimal architectural proxy, not yet direct conditioning inside TabICL, and its 16--17 cached specialist views are reported explicitly.
+
+## Full-paper exploratory program
+
+The real-data scale-up is implemented separately under `crossfm/fullpaper/` and
+frozen in `configs/fullpaper.yaml`. It covers temporal customer-lapse datasets,
+the mandatory BeyondArena transfer subset, tuned tabular baselines, two TFM
+backbones, constrained sequence-level LLM likelihoods, both one-way directions,
+CrossFM-AR, AR+, SMR, causal ablations, schema robustness, context budgets, and
+resumable prediction-level artifacts. The H100 and compliant Kaggle author split
+is documented in `docs/fullpaper_runbook.md`.
+
+Local validation does not download models or run inference:
+
+~~~bash
+python -m pytest
+python -m crossfm.fullpaper.cli plan --config configs/fullpaper.yaml \
+  --profile author_b_kaggle_frontier_temporal \
+  --output outputs/plan --world-size 2
+~~~
+
+The entire program remains exploratory and non-confirmatory. A completed process
+is not a scientific result unless every expected task and referenced prediction
+artifact validates against the frozen config and checksums.

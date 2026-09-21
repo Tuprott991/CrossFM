@@ -22,6 +22,20 @@ gpu = [
   "safetensors==0.7.0",
 ]
 test = ["pytest==8.3.5"]
+fullpaper = [
+  "pyarrow==18.1.0",
+  "openpyxl==3.1.5",
+  "data-foundry==0.0.5",
+  "catboost==1.2.10",
+  "lightgbm==4.7.0",
+  "xgboost==3.2.0",
+  "tabpfn==9.0.0",
+  "tabm==0.0.3",
+  "autogluon.tabular==1.6.3",
+]
+
+[project.scripts]
+crossfm-fullpaper = "crossfm.fullpaper.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["crossfm*"]

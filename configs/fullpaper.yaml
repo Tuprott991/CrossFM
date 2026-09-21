@@ -1,0 +1,311 @@
+experiment:
+  protocol_id: crossfm-align-fullpaper-exploratory-v1
+  classification: exploratory_non_confirmatory
+  seeds: [20101, 20102, 20103, 20104, 20105]
+  schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
+  context_budgets: [32, 128, 512, 2048, 10000, full]
+
+source:
+  git_commit: BUILD_TIME
+  dirty: BUILD_TIME
+
+runtime:
+  artifact_schema_version: crossfm-fullpaper-v1
+  h100_dtype: bfloat16
+  t4_dtype: float16
+  tf32_on_h100: true
+  static_tokenization_cache: true
+  static_schema_embedding_cache: true
+  response_bank_cache: true
+  atomic_task_records: true
+
+routing:
+  representation: continuous_posterior
+  codebook: semantic_candidate_views
+  residual_bypass: exact
+  fallback: llm
+  posterior_temperature: 0.25
+  route_temperature: 1.0
+  gate_floor: 0.0
+
+selection:
+  mean_logloss_gain: 0.01
+  max_dataset_degradation: 0.005
+  select_globally: true
+  test_labels_forbidden: true
+
+datasets:
+  d1_kkbox:
+    loader: manifest_table
+    files: {table: kkbox/customer_cutoffs.parquet}
+    target_column: target
+    split_column: split
+    split: temporal
+    checksum_required: true
+    official_metric: average_precision
+    task_description: Predict whether this music subscriber will lapse in the next month.
+    cost: 5.0
+    views:
+      recency: {patterns: [recency, last_, days_since]}
+      frequency: {patterns: [count, frequency, active_days]}
+      payment_friction: {patterns: [payment, cancel, expire, auto_renew, transaction]}
+      tenure_contract: {patterns: [tenure, registered, plan, membership]}
+      engagement: {patterns: [song, listen, log, engagement]}
+  d2_online_retail:
+    loader: online_retail
+    files: {transactions: online_retail/online_retail_ii.parquet}
+    split: temporal
+    checksum_required: true
+    official_metric: average_precision
+    task_description: Predict whether this retail customer will make no purchase in the next 30 days.
+    cost: 4.0
+    views:
+      recency: {patterns: [recency, tenure]}
+      frequency: {patterns: [event_count, active_days]}
+      monetary: {patterns: [value_sum, value_mean]}
+      product_breadth: {patterns: [unique_items]}
+  d3_retailrocket:
+    loader: retailrocket
+    files: {events: retailrocket/events.csv}
+    target_mode: engagement
+    history_days: 90
+    split: temporal
+    checksum_required: true
+    official_metric: average_precision
+    task_description: Predict whether this e-commerce visitor will have no qualifying engagement in the next 30 days.
+    cost: 4.0
+    views:
+      recency: {patterns: [recency, tenure]}
+      activity: {patterns: [event_count, active_days]}
+      product_breadth: {patterns: [unique_items]}
+      funnel: {patterns: [view, addtocart, transaction]}
+  d4_iranian_churn:
+    loader: manifest_table
+    files: {table: iranian_churn/iranian_churn.csv}
+    target_column: Churn
+    split: iid
+    split_seed: 1701
+    checksum_required: true
+    official_metric: average_precision
+    task_description: Predict whether this telecommunications customer will churn.
+    cost: 1.0
+    views:
+      tenure: {patterns: [tenure, age]}
+      usage: {patterns: [call, sms, use, frequency]}
+      value: {patterns: [charge, revenue, value]}
+      complaints: {patterns: [complaint, failure]}
+  b1_hotel_booking:
+    loader: beyondarena
+    unique_name: hotel_booking_demand
+    split: temporal
+    repeat: 0
+    fold: 0
+    checksum_required: true
+    official_metric: roc_auc
+    task_description: Predict whether this hotel booking will be cancelled.
+    cost: 2.0
+    views:
+      timing: {patterns: [lead, arrival, waiting, booking]}
+      customer_history: {patterns: [previous, repeated, customer]}
+      stay: {patterns: [night, stay, room, guest]}
+      commercial: {patterns: [deposit, agent, company, rate, adr]}
+  b2_kick:
+    loader: beyondarena
+    unique_name: kick
+    split: temporal
+    repeat: 0
+    fold: 0
+    checksum_required: true
+    official_metric: roc_auc
+    task_description: Predict whether this purchased vehicle is a bad acquisition.
+    cost: 2.0
+    views:
+      vehicle: {patterns: [vehicle, model, make, age, odometer]}
+      auction: {patterns: [auction, purchase, cost]}
+      warranty: {patterns: [warranty, repair]}
+      market_value: {patterns: [mmr, value]}
+  b3_emscad:
+    loader: beyondarena
+    unique_name: emscad
+    split: iid
+    repeat: 0
+    fold: 0
+    checksum_required: true
+    official_metric: roc_auc
+    task_description: Predict whether this employment advertisement is fraudulent.
+    cost: 1.5
+    views:
+      description: {patterns: [description, text, profile]}
+      employment: {patterns: [employment, industry, function]}
+      organization: {patterns: [company, logo, location]}
+      requirements: {patterns: [requirement, education, experience]}
+  b4_bank_churn:
+    loader: beyondarena
+    unique_name: bank_customer_churn
+    split: iid
+    repeat: 0
+    fold: 0
+    checksum_required: true
+    official_metric: roc_auc
+    task_description: Predict whether this bank customer will churn.
+    cost: 1.0
+    views:
+      relationship: {patterns: [tenure, product, active]}
+      financial: {patterns: [balance, salary, credit]}
+      demographic: {patterns: [age, gender, geography]}
+  b5_ieee_fraud:
+    loader: beyondarena
+    unique_name: ieee_fraud_detection
+    split: temporal
+    repeat: 0
+    fold: 0
+    checksum_required: true
+    official_metric: roc_auc
+    task_description: Predict whether this financial transaction is fraudulent.
+    cost: 8.0
+    views:
+      transaction: {patterns: [transaction, amount, product, card]}
+      identity: {patterns: [id_, device, browser]}
+      address: {patterns: [addr, email, domain]}
+      temporal: {patterns: [time, day, hour, delta]}
+  b6_amex_grouped:
+    loader: beyondarena
+    unique_name: amex_non_iid_1m
+    split: grouped
+    repeat: 0
+    fold: 0
+    checksum_required: true
+    official_metric: roc_auc
+    task_description: Predict the binary customer credit-risk outcome from this anonymized record.
+    cost: 10.0
+    schema_conditions: [canonical, anonymized]
+    views: {}
+
+methods:
+  cache_tabicl:
+    stages: [response_bank]
+    schema_sensitive: false
+    backend: tabicl
+    cost: 8.0
+    inference_calls: 1
+    params: {}
+  cache_tabpfn35:
+    stages: [response_bank]
+    schema_sensitive: false
+    backend: tabpfn35
+    cost: 10.0
+    inference_calls: 1
+    params: {}
+  cache_llm:
+    stages: [llm_cache]
+    seed_sensitive: false
+    context_sensitive: false
+    model_id: Qwen/Qwen2.5-7B-Instruct
+    revision: a09a35458c702b33eeacc393d103063234e8bc28
+    t4_model_id: Qwen/Qwen2.5-1.5B-Instruct
+    t4_revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    dtype: bfloat16
+    embedding_batch_size: 16
+    likelihood_batch_size: 8
+    cost: 8.0
+    inference_calls: 1
+  cache_llm_tool:
+    stages: [llm_cache]
+    model_id: Qwen/Qwen2.5-7B-Instruct
+    revision: a09a35458c702b33eeacc393d103063234e8bc28
+    t4_model_id: Qwen/Qwen2.5-1.5B-Instruct
+    t4_revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    dtype: bfloat16
+    embedding_batch_size: 16
+    likelihood_batch_size: 8
+    tool_response_cache: cache_tabicl
+    cost: 9.0
+    inference_calls: 1
+  logistic: {stages: [evaluate], kind: direct_tabular, backend: logistic, schema_sensitive: false, cost: 0.1, inference_calls: 1}
+  catboost: {stages: [evaluate], kind: direct_tabular, backend: catboost, schema_sensitive: false, cost: 2.0, inference_calls: 1}
+  lightgbm: {stages: [evaluate], kind: direct_tabular, backend: lightgbm, schema_sensitive: false, cost: 1.5, inference_calls: 1}
+  xgboost: {stages: [evaluate], kind: direct_tabular, backend: xgboost, schema_sensitive: false, cost: 1.5, inference_calls: 1}
+  tabm: {stages: [evaluate], kind: direct_tabular, backend: tabm, schema_sensitive: false, cost: 3.0, inference_calls: 1}
+  autogluon: {stages: [evaluate], kind: direct_tabular, backend: autogluon, schema_sensitive: false, params: {presets: best_quality, time_limit: 3600}, cost: 5.0, inference_calls: 1}
+  tabicl_only: {stages: [evaluate], kind: tfm_only, response_cache: cache_tabicl, llm_cache: cache_llm, schema_sensitive: false, cost: 0.1, inference_calls: 1}
+  tabpfn35_only: {stages: [evaluate], kind: tfm_only, response_cache: cache_tabpfn35, llm_cache: cache_llm, schema_sensitive: false, cost: 0.1, inference_calls: 1}
+  llm_only: {stages: [evaluate], kind: llm_only, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 1}
+  prediction_ensemble: {stages: [evaluate], kind: ensemble, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
+  llm_to_tfm: {stages: [evaluate], kind: semantic_oneway, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 1}
+  llm_to_tfm_compute_matched: {stages: [evaluate], kind: semantic_oneway, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 3}
+  tfm_to_llm: {stages: [evaluate], kind: tfm_to_llm, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 1}
+  textual_tool: {stages: [evaluate], kind: llm_only, response_cache: cache_tabicl, llm_cache: cache_llm_tool, cost: 0.2, inference_calls: 2}
+  crossfm_ar: {stages: [evaluate], kind: ar, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 2}
+  crossfm_arplus: {stages: [evaluate], kind: arplus, response_cache: cache_tabicl, llm_cache: cache_llm, epochs: 100, hidden_dim: 32, anchor_kl: 0.02, correction_l2: 0.001, cost: 0.5, inference_calls: 2}
+  crossfm_smr: {stages: [evaluate], kind: smr, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.4, inference_calls: 2}
+  crossfm_round1: {stages: [evaluate], kind: round1, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 1}
+  crossfm_round2: {stages: [evaluate], kind: ar, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 2}
+  crossfm_round3: {stages: [evaluate], kind: round3, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.3, inference_calls: 3}
+  ablate_no_semantic: {stages: [evaluate], kind: no_semantic, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
+  ablate_uniform_posterior: {stages: [evaluate], kind: uniform_ablation, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
+  ablate_hard_posterior: {stages: [evaluate], kind: hard_ablation, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
+  ablate_shuffle_message: {stages: [evaluate], kind: shuffle_message, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
+  ablate_random_bridge: {stages: [evaluate], kind: random_bridge, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
+  ablate_gate_disabled: {stages: [evaluate], kind: gate_disabled, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
+  ablate_arplus_no_anchor: {stages: [evaluate], kind: arplus_no_anchor, response_cache: cache_tabicl, llm_cache: cache_llm, epochs: 100, cost: 0.4, inference_calls: 2}
+  ablate_arplus_shuffle_response: {stages: [evaluate], kind: arplus_shuffle_response, response_cache: cache_tabicl, llm_cache: cache_llm, epochs: 100, cost: 0.4, inference_calls: 2}
+  crossfm_ar_tabpfn35: {stages: [evaluate], kind: ar, response_cache: cache_tabpfn35, llm_cache: cache_llm, cost: 0.2, inference_calls: 2}
+  crossfm_arplus_tabpfn35: {stages: [evaluate], kind: arplus, response_cache: cache_tabpfn35, llm_cache: cache_llm, epochs: 100, cost: 0.5, inference_calls: 2}
+
+profiles:
+  author_a_h100_primary:
+    owner_role: author_a
+    accelerator: h100_80gb
+    datasets: [d1_kkbox, d2_online_retail]
+    methods: [cache_tabicl, cache_tabpfn35, cache_llm, cache_llm_tool, logistic, catboost, lightgbm, xgboost, tabm, autogluon, tabicl_only, tabpfn35_only, llm_only, prediction_ensemble, llm_to_tfm, llm_to_tfm_compute_matched, tfm_to_llm, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, crossfm_round1, crossfm_round2, crossfm_round3, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_random_bridge, ablate_gate_disabled, ablate_arplus_no_anchor, ablate_arplus_shuffle_response, crossfm_ar_tabpfn35, crossfm_arplus_tabpfn35]
+    stages: [response_bank, llm_cache, evaluate]
+    schema_conditions: [canonical]
+    context_budgets: [10000, full]
+  author_a_h100_robustness:
+    owner_role: author_a
+    accelerator: h100_80gb
+    datasets: [d1_kkbox, d2_online_retail]
+    methods: [cache_tabicl, cache_llm, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, crossfm_ar, crossfm_arplus, ablate_shuffle_message, ablate_gate_disabled]
+    stages: [response_bank, llm_cache, evaluate]
+    schema_conditions: [aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
+    context_budgets: [32, 128, 512, 2048]
+  author_a_h100_scale:
+    owner_role: author_a
+    accelerator: h100_80gb
+    datasets: [b5_ieee_fraud, b6_amex_grouped]
+    methods: [cache_tabicl, cache_tabpfn35, cache_llm, catboost, tabicl_only, tabpfn35_only, prediction_ensemble, crossfm_ar, crossfm_arplus, crossfm_ar_tabpfn35, crossfm_arplus_tabpfn35]
+    stages: [response_bank, llm_cache, evaluate]
+    schema_conditions: [canonical]
+    context_budgets: [10000, full]
+  author_b_kaggle_frontier_temporal:
+    owner_role: author_b
+    accelerator: kaggle_t4x2
+    datasets: [b1_hotel_booking, b2_kick]
+    methods: [cache_tabicl, cache_llm, logistic, catboost, autogluon, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_shuffle_message]
+    stages: [response_bank, llm_cache, evaluate]
+    schema_conditions: [canonical]
+    context_budgets: [10000]
+  author_b_kaggle_frontier_semantic:
+    owner_role: author_b
+    accelerator: kaggle_t4x2
+    datasets: [b3_emscad, b4_bank_churn]
+    methods: [cache_tabicl, cache_llm, logistic, catboost, autogluon, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_shuffle_message]
+    stages: [response_bank, llm_cache, evaluate]
+    schema_conditions: [canonical]
+    context_budgets: [10000]
+  author_b_kaggle_d4:
+    owner_role: author_b
+    accelerator: kaggle_t4x2
+    datasets: [d4_iranian_churn]
+    methods: [cache_tabicl, cache_tabpfn35, cache_llm, logistic, catboost, lightgbm, xgboost, tabicl_only, tabpfn35_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_gate_disabled, crossfm_ar_tabpfn35]
+    stages: [response_bank, llm_cache, evaluate]
+    schema_conditions: [canonical, aliases, anonymized]
+    context_budgets: [32, 128, 512, 2048, full]
+  author_b_kaggle_d3:
+    owner_role: author_b
+    accelerator: kaggle_t4x2
+    datasets: [d3_retailrocket]
+    methods: [cache_tabicl, cache_llm, logistic, catboost, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_shuffle_message, ablate_gate_disabled]
+    stages: [response_bank, llm_cache, evaluate]
+    schema_conditions: [canonical]
+    context_budgets: [10000]

@@ -1,0 +1,22 @@
+experiment:
+  protocol_id: crossfm-align-mechanism-stress-exploratory-v1
+  classification: exploratory_non_confirmatory
+  seeds: [21101, 21102, 21103, 21104, 21105]
+  episodes: 1000
+suites:
+  s1_posterior_noise:
+    context: [8, 16, 32, 64, 128]
+    noise: [0.5, 1.0, 1.5, 2.0]
+    methods: [hard, soft, uniform, oracle]
+  s2_codebook_corruption:
+    corruption: [0.0, 0.1, 0.25, 0.5]
+    methods: [hard, soft, oracle]
+  s3_compositional_scaling:
+    markers: [2, 4, 6, 8]
+    methods: [hard, soft]
+  s4_semantic_statistical_conflict:
+    conflict: [0.0, 0.25, 0.5, 0.75, 1.0]
+    methods: [hard, soft, oracle]
+  s5_preservation:
+    structure: [0.0, 0.25, 0.5, 1.0]
+    methods: [hard, soft, uniform]
