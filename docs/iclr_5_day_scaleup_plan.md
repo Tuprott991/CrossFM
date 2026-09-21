@@ -50,6 +50,7 @@ Do not claim novelty for text embeddings, tool calling, generic adapters, extra 
 - **RQ5:** Does it survive aliases, anonymization, partial metadata, and posterior noise?
 - **RQ6:** Does it survive at least two TFMs and two LLM families?
 - **RQ7:** Does it improve lift and calibration, not only AUROC?
+- **RQ8:** Does the coordination mechanism transfer to standardized non-IID tasks selected independently of our customer-lapse datasets?
 
 ## 3. Full-paper architecture
 
@@ -106,6 +107,34 @@ Before final tests:
 
 Online Retail II has 1,067,371 transactions across two years. RetailRocket has about 2.76M events across 4.5 months but requires a repeat-engagement cohort; otherwise one-time visitors trivialize lapse.
 
+### Mandatory standardized frontier track
+
+The real lapse datasets remain the headline evidence. Add a fixed, secondary track from [BeyondArena](https://huggingface.co/datasets/TabArena/BeyondArena) to test whether CrossFM-Align transfers beyond custom cohort construction. BeyondArena is preferred over an IID-only suite because it provides official IID, temporal, and grouped splits. Freeze this list before running any method; do not replace a difficult dataset after observing results.
+
+| ID | BeyondArena `unique_name` | Split | Size | Why it is included | Priority |
+|---|---|---:|---:|---|---|
+| B1 | `hotel_booking_demand` | Temporal | 81,418 x 31 | Customer cancellation, interpretable business schema, close to lapse risk | Mandatory |
+| B2 | `kick` | Temporal | 72,983 x 32 | Manageable temporal business-risk shift outside churn | Mandatory |
+| B3 | `emscad` | IID | 17,460 x 17 | Text-bearing semantic-schema test; probes whether the LLM channel adds value | Mandatory |
+| B4 | `bank_customer_churn` | IID | 10,000 x 10 | Recognizable direct-churn reference and small-data TFM test | Mandatory |
+| B5 | `ieee_fraud_detection` | Temporal | 590,540 x 435 | High-dimensional temporal scale stress | Stretch |
+| B6 | `amex_non_iid_1m` | Grouped | 1,249,605 x 189 | Group-shift and largely opaque-feature negative control | Stretch |
+
+Rules for this track:
+
+- Use the official BeyondArena folds, target, metadata, and metric without redefining labels or splits.
+- Run B1–B4 even if D3 or D4 is delayed. Run B5/B6 only after the lapse anchors and B1–B4 are complete.
+- Preserve original feature names for the canonical condition. Use official/source descriptions only; do not invent label-informed descriptions.
+- Treat B6 as a negative control: opaque features should reduce the semantic advantage. A null CrossFM gain there is not a failure if preservation prevents harm.
+- Do not average B1–B6 into the customer-lapse headline. Report a separate standardized-transfer table and mean rank.
+- Record the exact BeyondArena/Data Foundry revision, dataset UUID, checksum, and split IDs.
+
+### Frontier-track method budget
+
+The full real-data grid remains D1/D2. To fit the deadline, B1–B4 use a reduced but causally sufficient grid: CatBoost, strongest available standalone TFM, LLM-only, tuned probability ensemble, semantic one-way selector, CrossFM-AR, CrossFM-AR+, and no-semantic/shuffled-message ablations. B5/B6 use CatBoost, standalone TFM, ensemble, AR, and AR+ only.
+
+[TabPFN-3.5](https://arxiv.org/abs/2609.17895) is a frontier replication rather than the sole backbone. If an official reproducible checkpoint/interface and compatible license are available, run it on D1, D2, and B1–B4 with a pinned revision. Otherwise record the access failure and use pinned TabPFN v2.5; TabICLv2 remains the primary open backbone so the claim does not depend on one newly released system.
+
 ### Temporal labeling
 
 For transactional datasets:
@@ -161,6 +190,7 @@ Current strong references include [TabPFN v2](https://www.nature.com/articles/s4
 | Tabular DL | TabM | official search space; 20 trials or 2 GPU-hours |
 | TFM | TabPFN v2/v2.5 | official inference within limits |
 | TFM | TabICLv2 | pinned official checkpoint |
+| Frontier TFM | TabPFN-3.5 | pinned official interface on D1/D2 and B1–B4 if reproducible; v2.5 fallback |
 | LLM | Qwen2.5-7B-Instruct | constrained LOW/HIGH likelihood |
 | Fusion | tuned probability ensemble | LLM + full-table TFM |
 | One-way | semantic view selector | schema/LLM → TFM view |
@@ -184,6 +214,12 @@ Reduced D1/D2 grid:
 - Qwen2.5-7B + TabPFN v2/v2.5.
 
 Reduced methods: TFM, LLM, ensemble, one-way selector, AR, AR+.
+
+Standardized-transfer replication:
+
+- B1–B4: Qwen2.5-7B + TabICLv2 reduced grid.
+- B1–B4: TabPFN-3.5 or pinned v2.5 replication for TFM, ensemble, AR, and AR+.
+- B5/B6: one backbone only unless all mandatory cells are already validated.
 
 ### Fairness tracks
 
@@ -245,6 +281,7 @@ Inference:
 - Report paired 95% CIs against the strongest baseline.
 - Holm-correct primary comparisons within each dataset.
 - Across datasets report mean rank and direction counts; four datasets do not justify universal significance.
+- For B1–B6, retain the official benchmark metric and also report log loss for binary tasks when probabilities are available. Never pool their examples with the lapse datasets.
 
 ### GREEN gate
 
@@ -254,6 +291,7 @@ Inference:
 - Preservation and message ablations behave causally.
 - Alias performance retains the improvement.
 - At least one backbone replacement reproduces the direction.
+- On mandatory B1–B4, CrossFM-Align improves over the standalone TFM on at least 3 of 4 tasks by the official metric or log loss, with no material preservation failure. Label this supporting transfer evidence, not a new SOTA claim.
 
 Use “operationally strong” only if CrossFM beats/ties the strongest tuned baseline on 3 of 4 datasets.
 
@@ -308,7 +346,9 @@ If eight compliant sessions are available:
 | K5 | Online Retail GBDT/TabM | Author A |
 | K6 | Online Retail CrossFM ablations from cache | Author A |
 | K7 | RetailRocket targets/cohort sensitivity | Author B |
-| K8 | Backbone and seed replication | first free owner |
+| K8 | BeyondArena B1–B4 reduced grid | first free owner |
+
+Run B5/B6 on the H100 only after D1/D2 caches finish. BeyondArena cache keys additionally include dataset UUID and official split/repeat/fold IDs.
 
 Cache keys must contain dataset checksum, cohort ID, split hash, feature/schema revisions, model IDs/revisions, preprocessing revision, commit, and config digest.
 
@@ -329,6 +369,7 @@ Cache keys must contain dataset checksum, cohort ID, split hash, feature/schema 
 - Leakage/count/checksum audit.
 - GBDTs, AutoGluon, TabM, LLM-only, one-way baselines.
 - D3/D4 experiments.
+- BeyondArena B1–B4 reduced grid and official-split verification.
 - Synthetic grids.
 - Independent bootstrap and headline-table reconstruction.
 - Datasets, Evaluation, Limitations writing.
@@ -345,6 +386,7 @@ Cross-checks:
 ### Day 1 — freeze data and strong baselines
 
 - Hours 0–2: freeze protocol, registry, datasets, checksums, labels, owners.
+- Hours 0–2: also pin the BeyondArena/Data Foundry revision and B1–B6 UUIDs; no result-driven substitutions.
 - Hours 2–8: build cohorts, leakage tests, views, metadata; launch GBDTs/TabM.
 - Hours 8–18: create LLM/TFM caches; launch synthetic and small-data lanes.
 
@@ -357,6 +399,7 @@ Exit: three valid manifests, temporal audits passed, one strong baseline per dat
 - Run canonical three-seed grid.
 - Run matched/full tracks.
 - Start D3/D4 CrossFM.
+- Start B1–B4 from official folds; launch B5/B6 only if the primary cache critical path is clear.
 
 Kill rule: if CrossFM improves validation log loss on no dataset, stop model-family expansion and prepare a qualified/negative transfer result.
 
@@ -366,6 +409,7 @@ Kill rule: if CrossFM improves validation log loss on no dataset, stop model-fam
 - Alias, anonymization, shuffled/partial metadata.
 - Zero/shuffle/uniform/hard/no-anchor/random residual.
 - Qwen scale and TFM replacement on D1/D2.
+- Complete B1–B4 reduced grid and one TabPFN-3.5/v2.5 backbone replication.
 - Complete S1–S5.
 - Start paired bootstraps.
 
@@ -456,6 +500,7 @@ Exclude a comparator with reason after six engineering hours or two GPU-hours af
 
 - validated synthetic causal evidence;
 - at least three real datasets, two temporal;
+- all four mandatory BeyondArena transfer tasks, reported separately from the lapse datasets;
 - tuned GBDT, TabM, TFM, LLM, ensemble, one-way, AR, AR+;
 - customer-level predictions and paired CIs;
 - schema robustness;
@@ -479,5 +524,6 @@ If real transfer fails, reframe:
 7. Create the registry; Phase 5.2 remains RUNNING, not evidence.
 8. Freeze AR-versus-AR+ selection.
 9. Draft Introduction and Related Work while caches run.
+10. Pin and prefetch only BeyondArena B1–B4; validate official fold indices and licenses before model execution.
 
 The critical path is **data integrity → immutable caches → primary temporal results**. Adapter training is not the bottleneck.
