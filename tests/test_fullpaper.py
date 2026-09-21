@@ -189,3 +189,14 @@ def test_kaggle_fleet_has_four_distinct_accounts_profiles_and_private_token_env(
     child = FLEET._safe_env("selected-token")
     assert child["KAGGLE_API_TOKEN"] == "selected-token"
     assert all(not key.startswith("KAGGLE_ACCESS_TOKEN_") for key in child)
+
+
+def test_kaggle_remote_bundle_match_excludes_control_metadata(tmp_path: Path):
+    (tmp_path / "dataset-metadata.json").write_text("control")
+    (tmp_path / "wheel.whl").write_bytes(b"wheel")
+    (tmp_path / "config.yaml").write_bytes(b"config")
+    rows = [
+        {"name": "wheel.whl", "size": 5},
+        {"name": "config.yaml", "size": 6},
+    ]
+    assert FLEET._remote_bundle_matches(rows, tmp_path)

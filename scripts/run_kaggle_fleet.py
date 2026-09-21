@@ -208,7 +208,8 @@ def build_lane(lane: Lane, owner: str) -> Path:
 
 def _verify_remote_bundle(token: str, ref: str, local_dataset: Path) -> None:
     expected = {
-        path.name: path.stat().st_size for path in local_dataset.iterdir() if path.is_file()
+        path.name: path.stat().st_size for path in local_dataset.iterdir()
+        if path.is_file() and path.name != "dataset-metadata.json"
     }
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
@@ -226,14 +227,28 @@ def _verify_remote_bundle(token: str, ref: str, local_dataset: Path) -> None:
     raise RuntimeError(f"Remote bundle did not become verifiable within five minutes: {ref}")
 
 
+def _remote_bundle_matches(rows: list[dict[str, Any]], local_dataset: Path) -> bool:
+    expected = {
+        path.name: path.stat().st_size for path in local_dataset.iterdir()
+        if path.is_file() and path.name != "dataset-metadata.json"
+    }
+    observed = {
+        str(row.get("name")): int(row.get("totalBytes") or row.get("size") or -1)
+        for row in rows
+    }
+    return set(expected) == set(observed) and all(observed[name] == size for name, size in expected.items())
+
+
 def upload_and_launch(lane: Lane, owner: str, token: str, bundle: Path) -> dict[str, str]:
     active = _active_recent(token)
     if len(active) >= 2:
         raise RuntimeError(f"Refusing launch: {owner} already has two active sessions")
     dataset_ref = f"{owner}/{_bundle_slug(lane.profile)}"
     dataset_dir = bundle / "dataset"
-    exists = _dataset_files(token, dataset_ref) is not None
-    if exists:
+    remote_files = _dataset_files(token, dataset_ref)
+    if remote_files is not None and _remote_bundle_matches(remote_files, dataset_dir):
+        pass
+    elif remote_files is not None:
         _run([
             "kaggle", "datasets", "version", "-p", str(dataset_dir),
             "-m", f"Freeze {lane.profile} exploratory protocol", "-r", "zip",
@@ -249,11 +264,19 @@ def upload_and_launch(lane: Lane, owner: str, token: str, bundle: Path) -> dict[
     }
 
 
-def launch() -> list[dict[str, str]]:
+def launch(*, reuse_bundles: bool = False) -> list[dict[str, str]]:
     tokens = _load_tokens()
     checks = preflight()
     owners = {int(row["account"]): str(row["owner"]) for row in checks}
-    bundles = {lane.account: build_lane(lane, owners[lane.account]) for lane in LANES}
+    if reuse_bundles:
+        bundles = {lane.account: ROOT / "dist" / "fullpaper" / lane.profile for lane in LANES}
+        for lane in LANES:
+            _run([
+                sys.executable, str(ROOT / "scripts" / "validate_fullpaper_bundle.py"),
+                str(bundles[lane.account]), "--profile", lane.profile,
+            ])
+    else:
+        bundles = {lane.account: build_lane(lane, owners[lane.account]) for lane in LANES}
     results = []
     with ThreadPoolExecutor(max_workers=len(LANES)) as pool:
         futures = {
@@ -309,11 +332,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Launch the four-author CrossFM Kaggle fleet")
     parser.add_argument("command", choices=("preflight", "launch", "status", "monitor", "download"))
     parser.add_argument("--poll-seconds", type=int, default=120)
+    parser.add_argument("--reuse-bundles", action="store_true")
     args = parser.parse_args()
     if args.command == "preflight":
         value = preflight()
     elif args.command == "launch":
-        value = launch()
+        value = launch(reuse_bundles=args.reuse_bundles)
     elif args.command == "status":
         value = statuses()
     elif args.command == "monitor":
