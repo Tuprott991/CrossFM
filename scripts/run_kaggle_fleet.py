@@ -95,7 +95,11 @@ def _run(
         command, cwd=cwd, env=env, text=True, capture_output=True,
         encoding="utf-8", errors="replace",
     )
-    if check and result.returncode:
+    semantic_error = any(marker in result.stdout.lower() for marker in (
+        "dataset creation error:", "dataset version creation error:",
+        "kernel push error:", "notebook push error:",
+    ))
+    if check and (result.returncode or semantic_error):
         message = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"Command failed ({result.returncode}): {command[0]}: {message[-3000:]}")
     return result
@@ -183,7 +187,7 @@ def preflight() -> list[dict[str, Any]]:
 
 
 def _bundle_slug(profile: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", profile)
+    safe = re.sub(r"[^a-zA-Z0-9.-]", "-", profile)
     return f"crossfm-{safe}-bundle".lower()
 
 

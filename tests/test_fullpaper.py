@@ -183,6 +183,7 @@ def test_kaggle_fleet_has_four_distinct_accounts_profiles_and_private_token_env(
     assert len({lane.profile for lane in FLEET.LANES}) == 4
     assert len({lane.kernel_slug for lane in FLEET.LANES}) == 4
     assert all(6 <= len(lane.title) <= 50 for lane in FLEET.LANES)
+    assert all("_" not in FLEET._bundle_slug(lane.profile) for lane in FLEET.LANES)
     monkeypatch.setenv("KAGGLE_ACCESS_TOKEN_1", "must-not-propagate")
     monkeypatch.setenv("KAGGLE_ACCESS_TOKEN_4", "must-not-propagate")
     child = FLEET._safe_env("selected-token")

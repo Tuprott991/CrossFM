@@ -14,7 +14,7 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $distBase = [System.IO.Path]::GetFullPath((Join-Path $repo 'dist\fullpaper'))
-$safeProfile = $Profile -replace '[^a-zA-Z0-9_.-]', '-'
+$safeProfile = $Profile -replace '[^a-zA-Z0-9.-]', '-'
 $distRoot = [System.IO.Path]::GetFullPath((Join-Path $distBase $safeProfile))
 if (-not $distRoot.StartsWith($distBase + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Unsafe staging path: $distRoot"
