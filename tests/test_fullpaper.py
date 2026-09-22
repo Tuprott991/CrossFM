@@ -4,6 +4,7 @@ import json
 import importlib.util
 from pathlib import Path
 import sys
+import types
 
 import numpy as np
 import pandas as pd
@@ -14,6 +15,7 @@ from crossfm.fullpaper.artifacts import (
 )
 from crossfm.fullpaper.aggregate import _select_arplus
 from crossfm.fullpaper.data import build_event_cohorts, load_retailrocket
+from crossfm.fullpaper.models import _FROZEN_MODEL_CACHE, _sklearn_matrix, fit_predict_tabular
 from crossfm.fullpaper.protocol import balanced_shards, load_protocol, tasks_for_profile
 from crossfm.fullpaper.routing import (
     ARPlusRouter, analytical_route, factorized_view_posterior, routing_features,
@@ -111,6 +113,47 @@ def test_temporal_cohort_builder_uses_only_pre_cutoff_events():
     )
     assert (cohorts["max_feature_time"] < cohorts["cutoff"]).all()
     assert (cohorts["label_window_end"] == cohorts["cutoff"] + pd.Timedelta(days=30)).all()
+
+
+def test_sklearn_matrix_normalizes_nullable_extension_values():
+    train = pd.DataFrame({
+        "number": pd.Series([1, pd.NA, 3], dtype="Int64"),
+        "category": pd.Series(["a", pd.NA, "b"], dtype="string"),
+    })
+    validation = pd.DataFrame({
+        "number": pd.Series([pd.NA], dtype="Int64"),
+        "category": pd.Series([pd.NA], dtype="string"),
+    })
+    test = pd.DataFrame({
+        "number": pd.Series([2], dtype="Int64"),
+        "category": pd.Series(["new"], dtype="string"),
+    })
+    matrices = _sklearn_matrix(train, validation, test)[:3]
+    assert all(matrix.shape[0] == expected for matrix, expected in zip(matrices, (3, 1, 1)))
+
+
+def test_tabicl_prediction_is_memory_bounded_by_chunks(monkeypatch):
+    calls = []
+
+    class FakeTabICL:
+        def __init__(self, **_):
+            pass
+
+        def fit(self, _x, _y):
+            return self
+
+        def predict_proba(self, values):
+            calls.append(len(values))
+            return np.tile([0.4, 0.6], (len(values), 1))
+
+    monkeypatch.setitem(sys.modules, "tabicl", types.SimpleNamespace(TabICLClassifier=FakeTabICL))
+    _FROZEN_MODEL_CACHE.clear()
+    fit_predict_tabular(
+        "tabicl", pd.DataFrame({"x": range(20)}), np.asarray([0, 1] * 10),
+        pd.DataFrame({"x": range(600)}), pd.DataFrame({"x": range(513)}),
+        seed=7, device="cpu", params={"prediction_chunk_size": 256},
+    )
+    assert calls == [256, 256, 88, 256, 256, 1]
 
 
 def test_retailrocket_short_timeline_supports_embargoed_three_way_split(tmp_path: Path):

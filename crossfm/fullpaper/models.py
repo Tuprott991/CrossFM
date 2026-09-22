@@ -38,6 +38,15 @@ def _sklearn_matrix(train: pd.DataFrame, validation: pd.DataFrame, test: pd.Data
 
     numeric = list(train.select_dtypes(include=[np.number, "bool"]).columns)
     categorical = [column for column in train if column not in numeric]
+    normalized = []
+    for frame in (train, validation, test):
+        value = frame.copy()
+        for column in numeric:
+            value[column] = pd.to_numeric(value[column], errors="coerce").astype(np.float64)
+        for column in categorical:
+            value[column] = value[column].astype("string").fillna("__MISSING__").astype(str)
+        normalized.append(value)
+    train, validation, test = normalized
     transformer = ColumnTransformer([
         ("numeric", make_pipeline(SimpleImputer(strategy="median"), StandardScaler()), numeric),
         ("categorical", make_pipeline(
@@ -203,14 +212,21 @@ def fit_predict_tabular(
             if name == "train": x_train = np.asarray(matrix, dtype=np.float32)
             elif name == "validation": x_validation = np.asarray(matrix, dtype=np.float32)
             else: x_test = np.asarray(matrix, dtype=np.float32)
+        prediction_chunk_size = int(params.pop("prediction_chunk_size", 256))
         key = ("tabicl", device, seed, tuple(sorted((name, repr(value)) for name, value in params.items())))
         model = _FROZEN_MODEL_CACHE.get(key)
         if model is None:
             model = TabICLClassifier(device=device, random_state=seed, **params)
             _FROZEN_MODEL_CACHE[key] = model
         model.fit(x_train, y_train)
-        validation_probability = model.predict_proba(x_validation)[:, 1]
-        test_probability = model.predict_proba(x_test)[:, 1]
+        def predict_chunks(values: np.ndarray) -> np.ndarray:
+            return np.concatenate([
+                model.predict_proba(values[start:start + prediction_chunk_size])[:, 1]
+                for start in range(0, len(values), prediction_chunk_size)
+            ])
+        validation_probability = predict_chunks(x_validation)
+        test_probability = predict_chunks(x_test)
+        params["prediction_chunk_size"] = prediction_chunk_size
     elif method in {"tabpfn", "tabpfn35"}:
         try:
             from tabpfn import TabPFNClassifier
