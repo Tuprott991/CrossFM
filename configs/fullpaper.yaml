@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v8
+  protocol_id: crossfm-align-fullpaper-exploratory-v9
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -23,7 +23,10 @@ runtime:
   max_validation_rows: 5000
   max_test_rows: 10000
   max_router_rows: 2048
-  minimum_free_disk_gib: 50
+  minimum_free_disk_gib:
+    h100_80gb: 50
+    kaggle_t4x2: 15
+    cpu: 5
   expected_package_versions:
     torch: 2.6.0
     transformers: 4.57.6

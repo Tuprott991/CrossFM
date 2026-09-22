@@ -45,7 +45,7 @@ FLEET_SPEC.loader.exec_module(FLEET)
 
 def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
-    assert config["experiment"]["protocol_id"] == "crossfm-align-fullpaper-exploratory-v8"
+    assert config["experiment"]["protocol_id"] == "crossfm-align-fullpaper-exploratory-v9"
     assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
     assert "llm_to_tfm_compute_matched" not in config["methods"]
     assert "tfm_to_llm" not in config["methods"]
@@ -55,6 +55,9 @@ def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
         "author_a_h100_primary"
     )
     assert "cache_llm_tool" in config["profiles"]["author_b_kaggle_d4"]["methods"]
+    assert config["runtime"]["minimum_free_disk_gib"] == {
+        "h100_80gb": 50, "kaggle_t4x2": 15, "cpu": 5,
+    }
     for profile in config["profiles"]:
         tasks = tasks_for_profile(config, profile)
         assert tasks
@@ -112,6 +115,15 @@ def test_h100_model_preflight_resolves_declared_model_families(monkeypatch, tmp_
     report = _model_preflight(config, "p")
     assert report["tabpfn_checkpoint_sha256"] == checksum
     assert report["llm_model_id"] == "llm"
+
+
+def test_disk_preflight_threshold_is_accelerator_specific():
+    from crossfm.fullpaper.cli import _minimum_free_disk_gib
+
+    config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
+    assert _minimum_free_disk_gib(config, "kaggle_t4x2") == 15
+    assert _minimum_free_disk_gib(config, "h100_80gb") == 50
+    assert _minimum_free_disk_gib(config, "cpu") == 5
 
 
 def test_cost_balanced_sharding_is_deterministic_and_complete():

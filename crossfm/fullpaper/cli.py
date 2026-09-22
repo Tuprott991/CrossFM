@@ -53,6 +53,16 @@ def _device(accelerator: str) -> str:
     return "cuda:0"
 
 
+def _minimum_free_disk_gib(config: dict, accelerator: str) -> int:
+    value = config["runtime"].get("minimum_free_disk_gib", 0)
+    if isinstance(value, dict):
+        value = value.get(accelerator, 0)
+    minimum = int(value)
+    if minimum < 0:
+        raise ValueError("minimum_free_disk_gib must be non-negative")
+    return minimum
+
+
 def _model_preflight(config: dict, profile: str) -> dict:
     """Resolve pinned model metadata and the compact TabPFN checkpoint up front."""
     spec = config["profiles"][profile]
@@ -101,7 +111,7 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
         "disk_free_bytes": shutil.disk_usage(output.parent if output.parent.exists() else Path.cwd()).free,
         "data_root": str(data_root.resolve()), "data_root_exists": data_root.exists(),
     }
-    minimum_disk = int(config["runtime"].get("minimum_free_disk_gib", 0)) * 1024**3
+    minimum_disk = _minimum_free_disk_gib(config, spec["accelerator"]) * 1024**3
     if report["disk_free_bytes"] < minimum_disk:
         raise RuntimeError(
             f"Insufficient output disk: {report['disk_free_bytes']} bytes free; "

@@ -100,6 +100,18 @@ def validate_protocol(config: dict[str, Any]) -> None:
         raise ValueError("Zero statistical structure must delegate exactly to the LLM")
     if config["source"].get("dirty") not in {False, "BUILD_TIME"}:
         raise ValueError("source.dirty must be false or BUILD_TIME")
+    disk_requirement = config["runtime"].get("minimum_free_disk_gib", 0)
+    if isinstance(disk_requirement, dict):
+        expected_accelerators = {"h100_80gb", "kaggle_t4x2", "cpu"}
+        if set(disk_requirement) != expected_accelerators:
+            raise ValueError(
+                "minimum_free_disk_gib must define h100_80gb, kaggle_t4x2, and cpu"
+            )
+        values = disk_requirement.values()
+    else:
+        values = (disk_requirement,)
+    if any(int(value) < 0 for value in values):
+        raise ValueError("minimum_free_disk_gib values must be non-negative")
 
 
 def _task_id(parts: list[str]) -> str:
