@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v4
+  protocol_id: crossfm-align-fullpaper-exploratory-v5
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -305,7 +305,7 @@ profiles:
     methods: [cache_tabicl, cache_llm, logistic, catboost, autogluon, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_shuffle_message]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical]
-    context_budgets: [10000]
+    context_budgets: [2048]
   author_b_kaggle_d4:
     owner_role: author_b
     accelerator: kaggle_t4x2
