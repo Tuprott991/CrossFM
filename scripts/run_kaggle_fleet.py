@@ -55,8 +55,8 @@ LANES = (
         "CrossFM Frontier Semantic Exploratory V1",
     ),
     Lane(
-        4, "author_b_kaggle_d3", "crossfm-full-paper-d3-exploratory-v1",
-        "CrossFM Full Paper D3 Exploratory V1",
+        4, "author_b_kaggle_d3", "crossfm-full-paper-d3-lci-exploratory-v1",
+        "CrossFM Full Paper D3 LCI Exploratory V1",
         "retailrocket", "ecommerce-dataset",
     ),
 )

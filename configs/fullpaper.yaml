@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v9
+  protocol_id: crossfm-align-fullpaper-exploratory-v10-lci
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -277,6 +277,24 @@ methods:
   crossfm_ar: {stages: [evaluate], kind: ar, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 2}
   crossfm_arplus: {stages: [evaluate], kind: arplus, response_cache: cache_tabicl, llm_cache: cache_llm, epochs: 100, hidden_dim: 32, anchor_kl: 0.02, correction_l2: 0.001, cost: 0.5, inference_calls: 2}
   crossfm_smr: {stages: [evaluate], kind: smr, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.4, inference_calls: 2}
+  crossfm_smr_refit: {stages: [evaluate], kind: smr_refit, response_cache: cache_tabicl, llm_cache: cache_llm, c_grid: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0], cost: 0.4, inference_calls: 2}
+  crossfm_lci:
+    stages: [evaluate]
+    kind: latent_codebook
+    response_cache: cache_tabicl
+    llm_cache: cache_llm
+    codebook_sizes: [1, 2, 4, 8]
+    temperatures: [0.5, 1.0, 2.0]
+    c_grid: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0]
+    minimum_multistate_gain: 0.002
+    use_semantic: true
+    cost: 0.7
+    inference_calls: 2
+  ablate_lci_single_state: {stages: [evaluate], kind: latent_codebook, response_cache: cache_tabicl, llm_cache: cache_llm, codebook_sizes: [1], fixed_codebook_size: 1, temperatures: [1.0], c_grid: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0], use_semantic: true, cost: 0.4, inference_calls: 2}
+  ablate_lci_no_semantic: {stages: [evaluate], kind: latent_codebook, response_cache: cache_tabicl, llm_cache: cache_llm, codebook_sizes: [1, 2, 4, 8], temperatures: [0.5, 1.0, 2.0], c_grid: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0], minimum_multistate_gain: 0.002, use_semantic: false, cost: 0.7, inference_calls: 2}
+  ablate_lci_hard: {stages: [evaluate], kind: latent_codebook, response_cache: cache_tabicl, llm_cache: cache_llm, codebook_sizes: [1, 2, 4, 8], temperatures: [0.5, 1.0, 2.0], c_grid: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0], minimum_multistate_gain: 0.002, use_semantic: true, hard_assignments: true, cost: 0.7, inference_calls: 2}
+  ablate_lci_shuffle_codes: {stages: [evaluate], kind: latent_codebook, response_cache: cache_tabicl, llm_cache: cache_llm, codebook_sizes: [1, 2, 4, 8], temperatures: [0.5, 1.0, 2.0], c_grid: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0], minimum_multistate_gain: 0.002, use_semantic: true, shuffle_assignments: true, cost: 0.7, inference_calls: 2}
+  ablate_lci_fixed16: {stages: [evaluate], kind: latent_codebook, response_cache: cache_tabicl, llm_cache: cache_llm, codebook_sizes: [1, 16], fixed_codebook_size: 16, temperatures: [0.5, 1.0, 2.0], c_grid: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0], use_semantic: true, cost: 0.8, inference_calls: 2}
   crossfm_round1: {stages: [evaluate], kind: round1, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 1}
   crossfm_round2: {stages: [evaluate], kind: ar, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 2}
   crossfm_round3: {stages: [evaluate], kind: round3, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.3, inference_calls: 2, logical_rounds: 3, correction_strength: 1.0}
@@ -346,8 +364,9 @@ profiles:
   author_b_kaggle_d3:
     owner_role: author_b
     accelerator: kaggle_t4x2
+    seeds: [25101, 25102, 25103, 25104, 25105]
     datasets: [d3_retailrocket]
-    methods: [cache_tabicl, cache_llm, logistic, catboost, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_shuffle_message, ablate_gate_disabled]
+    methods: [cache_tabicl, cache_llm, logistic, catboost, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, crossfm_ar, crossfm_arplus, crossfm_smr, crossfm_smr_refit, crossfm_lci, ablate_lci_single_state, ablate_lci_no_semantic, ablate_lci_hard, ablate_lci_shuffle_codes, ablate_lci_fixed16, ablate_shuffle_message, ablate_gate_disabled]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical]
     context_budgets: [10000]

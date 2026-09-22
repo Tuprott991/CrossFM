@@ -15,7 +15,9 @@ from crossfm.fullpaper.artifacts import (
     atomic_json, digest_json, reusable_record, write_task_record,
 )
 from crossfm.fullpaper.aggregate import _select_arplus
-from crossfm.fullpaper.engine import _group_cap, _router_split
+from crossfm.fullpaper.engine import (
+    _group_cap, _latent_codebook_route, _router_split, _smr_refit_route,
+)
 from crossfm.fullpaper.data import (
     _binary_target, build_event_cohorts, load_beyondarena, load_manifest_table,
     load_retailrocket,
@@ -27,7 +29,7 @@ from crossfm.fullpaper.models import (
 from crossfm.fullpaper.protocol import balanced_shards, load_protocol, tasks_for_profile
 from crossfm.fullpaper.routing import (
     ARPlusRouter, analytical_route, corrective_route, factorized_view_posterior,
-    routing_features,
+    routing_features, SoftLatentCodebookRouter,
 )
 from crossfm.fullpaper.splits import assert_asof_integrity, temporal_split
 from crossfm.fullpaper.synthetic_stress import StressCell, simulate_cell
@@ -45,7 +47,9 @@ FLEET_SPEC.loader.exec_module(FLEET)
 
 def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
-    assert config["experiment"]["protocol_id"] == "crossfm-align-fullpaper-exploratory-v9"
+    assert config["experiment"]["protocol_id"] == (
+        "crossfm-align-fullpaper-exploratory-v10-lci"
+    )
     assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
     assert "llm_to_tfm_compute_matched" not in config["methods"]
     assert "tfm_to_llm" not in config["methods"]
@@ -58,6 +62,13 @@ def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     assert config["runtime"]["minimum_free_disk_gib"] == {
         "h100_80gb": 50, "kaggle_t4x2": 15, "cpu": 5,
     }
+    d3 = config["profiles"]["author_b_kaggle_d3"]
+    assert d3["seeds"] == [25101, 25102, 25103, 25104, 25105]
+    assert {
+        "crossfm_smr_refit", "crossfm_lci", "ablate_lci_single_state",
+        "ablate_lci_no_semantic", "ablate_lci_hard",
+        "ablate_lci_shuffle_codes", "ablate_lci_fixed16",
+    }.issubset(d3["methods"])
     for profile in config["profiles"]:
         tasks = tasks_for_profile(config, profile)
         assert tasks
@@ -223,6 +234,64 @@ def test_arplus_zero_initialization_and_bypass_are_exact():
     assert probability[1] == fallback[1]
     assert np.array_equal(traces["correction"], np.zeros_like(traces["correction"]))
     assert router.trainable_params < 5000
+
+
+def test_soft_latent_codebook_has_continuous_normalized_posterior():
+    rng = np.random.default_rng(73)
+    bank = np.clip(rng.normal(0.5, 0.2, size=(80, 3)), 0.01, 0.99)
+    llm = np.clip(rng.normal(0.5, 0.2, size=80), 0.01, 0.99)
+    labels = ((bank[:, 0] + bank[:, 1]) > 1.0).astype(np.int8)
+    router = SoftLatentCodebookRouter(
+        codebook_size=4, temperature=2.0, regularization_c=0.1, seed=7,
+    )
+    details = router.fit(
+        response_bank=bank, llm_probability=llm, labels=labels,
+        semantic_logits=np.asarray([0.4, 0.2, -0.1]),
+    )
+    probability, trace = router.predict(
+        response_bank=bank[:12], llm_probability=llm[:12],
+        semantic_logits=np.asarray([0.4, 0.2, -0.1]),
+    )
+    assert probability.shape == (12,)
+    assert np.allclose(trace["posterior"].sum(axis=1), 1.0)
+    assert np.all((trace["posterior"] > 0) & (trace["posterior"] < 1))
+    assert details["code_usage_perplexity"] > 1.0
+
+
+def test_single_state_lci_is_exact_refit_smr_and_preserves_residual_path():
+    rng = np.random.default_rng(91)
+    router_bank = rng.uniform(0.05, 0.95, size=(80, 3))
+    validation_bank = rng.uniform(0.05, 0.95, size=(40, 3))
+    test_bank = rng.uniform(0.05, 0.95, size=(30, 3))
+    router_llm = rng.uniform(0.05, 0.95, size=80)
+    validation_llm = rng.uniform(0.05, 0.95, size=40)
+    test_llm = rng.uniform(0.05, 0.95, size=30)
+    router_labels = (router_bank[:, 0] > 0.5).astype(np.int8)
+    validation_labels = (validation_bank[:, 0] > 0.5).astype(np.int8)
+    c_grid = [0.1, 1.0]
+    smr_validation, smr_test, _ = _smr_refit_route(
+        router_bank=router_bank, router_llm=router_llm,
+        router_labels=router_labels, validation_bank=validation_bank,
+        validation_llm=validation_llm, validation_labels=validation_labels,
+        test_bank=test_bank, test_llm=test_llm, seed=17, c_grid=c_grid,
+    )
+    lci_validation, lci_test, details = _latent_codebook_route(
+        router_bank=router_bank, router_llm=router_llm,
+        router_labels=router_labels, validation_bank=validation_bank,
+        validation_llm=validation_llm, validation_labels=validation_labels,
+        test_bank=test_bank, test_llm=test_llm,
+        semantic_logits=np.asarray([0.2, 0.1, -0.3]), seed=17,
+        method={
+            "codebook_sizes": [1], "fixed_codebook_size": 1,
+            "temperatures": [1.0], "c_grid": c_grid,
+        },
+    )
+    assert np.allclose(lci_validation, smr_validation)
+    assert np.allclose(lci_test, smr_test)
+    assert details["selected_codebook_size"] == 1
+    assert details["residual_alpha"] == 0.0
+    assert details["preserved_fraction"] == 1.0
+    assert details["test_labels_used_for_selection"] is False
 
 
 def test_temporal_cohort_builder_uses_only_pre_cutoff_events():

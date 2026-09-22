@@ -19,8 +19,8 @@ from .models import (
 )
 from .protocol import ExperimentTask
 from .routing import (
-    ARPlusRouter, analytical_route, corrective_route, factorized_view_posterior,
-    routing_features,
+    ARPlusRouter, analytical_route, corrective_route, entropy,
+    factorized_view_posterior, routing_features, SoftLatentCodebookRouter,
 )
 
 
@@ -145,6 +145,276 @@ def _tune_ensemble(labels: np.ndarray, left: np.ndarray, right: np.ndarray) -> f
         loss = binary_metrics(labels, probability)["log_loss"]
         best = min(best, (loss, float(alpha)))
     return best[1]
+
+
+def _log_loss(labels: np.ndarray, probability: np.ndarray) -> float:
+    return float(binary_metrics(labels, probability)["log_loss"])
+
+
+def _smr_refit_route(
+    *,
+    router_bank: np.ndarray,
+    router_llm: np.ndarray,
+    router_labels: np.ndarray,
+    validation_bank: np.ndarray,
+    validation_llm: np.ndarray,
+    validation_labels: np.ndarray,
+    test_bank: np.ndarray,
+    test_llm: np.ndarray,
+    seed: int,
+    c_grid: list[float],
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Select SMR regularization on validation and refit on all pre-test rows."""
+    from sklearn.linear_model import LogisticRegression
+
+    x_router = np.column_stack((router_bank, router_llm))
+    x_validation = np.column_stack((validation_bank, validation_llm))
+    candidates: list[tuple[float, float, np.ndarray]] = []
+    for regularization_c in c_grid:
+        model = LogisticRegression(
+            C=float(regularization_c), max_iter=2000, random_state=seed,
+        ).fit(x_router, router_labels)
+        prediction = model.predict_proba(x_validation)[:, 1]
+        candidates.append((
+            _log_loss(validation_labels, prediction),
+            float(regularization_c), prediction,
+        ))
+    validation_loss, selected_c, validation_probability = min(
+        candidates, key=lambda item: (item[0], item[1]),
+    )
+    refit_bank = np.vstack((router_bank, validation_bank))
+    refit_llm = np.concatenate((router_llm, validation_llm))
+    refit_labels = np.concatenate((router_labels, validation_labels))
+    refit = LogisticRegression(
+        C=selected_c, max_iter=2000, random_state=seed,
+    ).fit(np.column_stack((refit_bank, refit_llm)), refit_labels)
+    probability = refit.predict_proba(np.column_stack((test_bank, test_llm)))[:, 1]
+    return validation_probability, probability, {
+        "selected_c": selected_c,
+        "selection_validation_log_loss": validation_loss,
+        "refit_rows": int(len(refit_labels)),
+        "trainable_params": int(refit.coef_.size + refit.intercept_.size),
+        "selection_labels": "validation_only",
+    }
+
+
+def _latent_codebook_route(
+    *,
+    router_bank: np.ndarray,
+    router_llm: np.ndarray,
+    router_labels: np.ndarray,
+    validation_bank: np.ndarray,
+    validation_llm: np.ndarray,
+    validation_labels: np.ndarray,
+    test_bank: np.ndarray,
+    test_llm: np.ndarray,
+    semantic_logits: np.ndarray,
+    seed: int,
+    method: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Select, refit, and safely route through a soft latent response codebook.
+
+    Candidate hyperparameters see router and validation data only.  The test
+    labels are intentionally absent from this interface.  K=1 is an exact SMR
+    capacity control, and the learned residual gate can delegate exactly to it.
+    """
+
+    sizes = sorted({int(value) for value in method.get("codebook_sizes", [1, 2, 4, 8])})
+    temperatures = [float(value) for value in method.get("temperatures", [0.5, 1.0, 2.0])]
+    c_grid = [float(value) for value in method.get("c_grid", [0.01, 0.03, 0.1, 0.3, 1.0, 3.0])]
+    fixed_size = method.get("fixed_codebook_size")
+    if fixed_size is not None:
+        fixed_size = int(fixed_size)
+        sizes = sorted(set(sizes + [fixed_size]))
+    sizes = sorted(set(sizes + [1]))
+    if not sizes or not temperatures or not c_grid:
+        raise ValueError("latent-codebook selection grids must be non-empty")
+    use_semantic = bool(method.get("use_semantic", True))
+    hard = bool(method.get("hard_assignments", False))
+    shuffle = bool(method.get("shuffle_assignments", False))
+    candidates: list[dict[str, Any]] = []
+    for codebook_size in sizes:
+        candidate_temperatures = temperatures[:1] if codebook_size == 1 else temperatures
+        for temperature in candidate_temperatures:
+            for regularization_c in c_grid:
+                model = SoftLatentCodebookRouter(
+                    codebook_size=codebook_size,
+                    temperature=temperature,
+                    regularization_c=regularization_c,
+                    seed=seed,
+                    use_semantic=use_semantic,
+                    hard_assignments=hard,
+                    shuffle_assignments=shuffle,
+                )
+                fit_details = model.fit(
+                    response_bank=router_bank,
+                    llm_probability=router_llm,
+                    labels=router_labels,
+                    semantic_logits=semantic_logits,
+                )
+                validation_probability, validation_trace = model.predict(
+                    response_bank=validation_bank,
+                    llm_probability=validation_llm,
+                    semantic_logits=semantic_logits,
+                )
+                candidates.append({
+                    "model": model,
+                    "codebook_size": codebook_size,
+                    "temperature": temperature,
+                    "regularization_c": regularization_c,
+                    "validation_probability": validation_probability,
+                    "validation_trace": validation_trace,
+                    "validation_loss": _log_loss(
+                        validation_labels, validation_probability,
+                    ),
+                    "fit_details": fit_details,
+                })
+    single_state = min(
+        (candidate for candidate in candidates if candidate["codebook_size"] == 1),
+        key=lambda item: (item["validation_loss"], item["regularization_c"]),
+    )
+    multistate_candidates = [
+        candidate for candidate in candidates if candidate["codebook_size"] > 1
+    ]
+    best_multistate = min(
+        multistate_candidates,
+        key=lambda item: (
+            item["validation_loss"], item["codebook_size"],
+            item["temperature"], item["regularization_c"],
+        ),
+    ) if multistate_candidates else None
+    if fixed_size is None:
+        best = min(
+            candidates,
+            key=lambda item: (
+                item["validation_loss"], item["codebook_size"],
+                item["temperature"], item["regularization_c"],
+            ),
+        )
+        minimum_gain = float(method.get("minimum_multistate_gain", 0.002))
+        if (
+            best["codebook_size"] == 1
+            or best["validation_loss"] > single_state["validation_loss"] - minimum_gain
+        ):
+            selected = single_state
+        else:
+            selected = best
+    else:
+        selected = min(
+            (candidate for candidate in candidates if candidate["codebook_size"] == fixed_size),
+            key=lambda item: (
+                item["validation_loss"], item["temperature"],
+                item["regularization_c"],
+            ),
+        )
+
+    alpha_grid = np.linspace(0.0, 1.0, 101)
+    if selected["codebook_size"] == 1:
+        residual_alpha = 0.0
+    else:
+        residual_alpha = min(
+            alpha_grid,
+            key=lambda alpha: _log_loss(
+                validation_labels,
+                (1.0 - alpha) * single_state["validation_probability"]
+                + alpha * selected["validation_probability"],
+            ),
+        )
+        residual_alpha = float(residual_alpha)
+    validation_gate = (
+        residual_alpha * selected["validation_trace"]["ood_confidence"]
+    )
+    validation_probability = single_state["validation_probability"] + validation_gate * (
+        selected["validation_probability"] - single_state["validation_probability"]
+    )
+
+    refit_bank = np.vstack((router_bank, validation_bank))
+    refit_llm = np.concatenate((router_llm, validation_llm))
+    refit_labels = np.concatenate((router_labels, validation_labels))
+    baseline = SoftLatentCodebookRouter(
+        codebook_size=1,
+        temperature=float(single_state["temperature"]),
+        regularization_c=float(single_state["regularization_c"]),
+        seed=seed,
+        use_semantic=use_semantic,
+        hard_assignments=hard,
+        shuffle_assignments=False,
+    )
+    baseline_fit = baseline.fit(
+        response_bank=refit_bank,
+        llm_probability=refit_llm,
+        labels=refit_labels,
+        semantic_logits=semantic_logits,
+    )
+    baseline_probability, _ = baseline.predict(
+        response_bank=test_bank,
+        llm_probability=test_llm,
+        semantic_logits=semantic_logits,
+    )
+    if selected["codebook_size"] == 1:
+        probability = baseline_probability
+        test_gate = np.zeros(len(test_bank), dtype=np.float64)
+        selected_fit = baseline_fit
+        test_trace = {"posterior": np.ones((len(test_bank), 1))}
+    else:
+        refit = SoftLatentCodebookRouter(
+            codebook_size=int(selected["codebook_size"]),
+            temperature=float(selected["temperature"]),
+            regularization_c=float(selected["regularization_c"]),
+            seed=seed,
+            use_semantic=use_semantic,
+            hard_assignments=hard,
+            shuffle_assignments=shuffle,
+        )
+        selected_fit = refit.fit(
+            response_bank=refit_bank,
+            llm_probability=refit_llm,
+            labels=refit_labels,
+            semantic_logits=semantic_logits,
+        )
+        selected_probability, test_trace = refit.predict(
+            response_bank=test_bank,
+            llm_probability=test_llm,
+            semantic_logits=semantic_logits,
+        )
+        test_gate = residual_alpha * test_trace["ood_confidence"]
+        probability = baseline_probability + test_gate * (
+            selected_probability - baseline_probability
+        )
+    details = {
+        "selected_codebook_size": int(selected["codebook_size"]),
+        "selected_temperature": float(selected["temperature"]),
+        "selected_c": float(selected["regularization_c"]),
+        "single_state_validation_log_loss": float(single_state["validation_loss"]),
+        "selected_candidate_validation_log_loss": float(selected["validation_loss"]),
+        "best_multistate_validation_log_loss": (
+            float(best_multistate["validation_loss"])
+            if best_multistate is not None else None
+        ),
+        "validation_gain_over_single_state": float(
+            single_state["validation_loss"] - selected["validation_loss"]
+        ),
+        "routed_validation_log_loss": _log_loss(
+            validation_labels, validation_probability,
+        ),
+        "residual_alpha": residual_alpha,
+        "mean_gate": float(np.mean(test_gate)),
+        "preserved_fraction": float(np.mean(test_gate == 0.0)),
+        "soft_posterior": not hard,
+        "semantic_conditioning": use_semantic,
+        "shuffled_training_assignments": shuffle,
+        "selection_labels": "validation_only",
+        "test_labels_used_for_selection": False,
+        "preservation_fallback": "single_state_refit_smr",
+        "candidate_count": len(candidates),
+        "refit_rows": int(len(refit_labels)),
+        **selected_fit,
+    }
+    if int(selected["codebook_size"]) > 1:
+        test_usage = np.mean(test_trace["posterior"], axis=0)
+        details["test_code_usage"] = test_usage.tolist()
+        details["test_code_usage_perplexity"] = float(np.exp(entropy(test_usage)))
+    return validation_probability, probability, details
 
 
 class FullPaperEngine:
@@ -608,6 +878,35 @@ class FullPaperEngine:
                         validation_probability = model.predict_proba(x_validation)[:, 1]
                         probability = model.predict_proba(x_test)[:, 1]
                         details["trainable_params"] = int(model.coef_.size + model.intercept_.size)
+                    elif kind == "smr_refit":
+                        validation_probability, probability, details = _smr_refit_route(
+                            router_bank=router_bank,
+                            router_llm=llm_router,
+                            router_labels=router_labels,
+                            validation_bank=validation_bank,
+                            validation_llm=llm_validation,
+                            validation_labels=validation_labels,
+                            test_bank=test_bank,
+                            test_llm=llm_test,
+                            seed=task.seed,
+                            c_grid=[float(value) for value in method.get(
+                                "c_grid", [0.01, 0.03, 0.1, 0.3, 1.0, 3.0],
+                            )],
+                        )
+                    elif kind == "latent_codebook":
+                        validation_probability, probability, details = _latent_codebook_route(
+                            router_bank=router_bank,
+                            router_llm=llm_router,
+                            router_labels=router_labels,
+                            validation_bank=validation_bank,
+                            validation_llm=llm_validation,
+                            validation_labels=validation_labels,
+                            test_bank=test_bank,
+                            test_llm=llm_test,
+                            semantic_logits=semantic,
+                            seed=task.seed,
+                            method=method,
+                        )
                     elif kind == "round3":
                         validation_round3 = corrective_route(
                             router_route, router_bank, router_labels,

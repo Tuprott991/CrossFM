@@ -275,6 +275,197 @@ class ARPlusRouter:
         }
 
 
+def _probability_logit(probability: np.ndarray) -> np.ndarray:
+    probability = np.clip(np.asarray(probability, dtype=np.float64), 1e-5, 1 - 1e-5)
+    return np.log(probability / (1.0 - probability))
+
+
+class SoftLatentCodebookRouter:
+    """Convex predictor with a soft codebook over frozen-model response states.
+
+    The codebook is induced only from response geometry.  Its posterior remains
+    continuous in the forward pass and modulates residuals around a global
+    linear fusion model.  With one codeword the design matrix is exactly the
+    response-bank-plus-LLM matrix used by SMR, which makes K=1 a meaningful
+    capacity control rather than a differently parameterized baseline.
+    """
+
+    def __init__(
+        self,
+        *,
+        codebook_size: int,
+        temperature: float,
+        regularization_c: float,
+        seed: int,
+        use_semantic: bool = True,
+        hard_assignments: bool = False,
+        shuffle_assignments: bool = False,
+    ) -> None:
+        if codebook_size < 1:
+            raise ValueError("codebook_size must be positive")
+        if temperature <= 0 or regularization_c <= 0:
+            raise ValueError("temperature and regularization_c must be positive")
+        self.codebook_size = int(codebook_size)
+        self.temperature = float(temperature)
+        self.regularization_c = float(regularization_c)
+        self.seed = int(seed)
+        self.use_semantic = bool(use_semantic)
+        self.hard_assignments = bool(hard_assignments)
+        self.shuffle_assignments = bool(shuffle_assignments)
+
+    @staticmethod
+    def _validate(
+        response_bank: np.ndarray,
+        llm_probability: np.ndarray,
+        semantic_logits: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        bank = np.asarray(response_bank, dtype=np.float64)
+        llm = np.asarray(llm_probability, dtype=np.float64).reshape(-1)
+        semantic = np.asarray(semantic_logits, dtype=np.float64).reshape(-1)
+        if bank.ndim != 2 or bank.shape[1] < 2:
+            raise ValueError("response_bank must be [rows, >=2 views]")
+        if llm.shape != (bank.shape[0],):
+            raise ValueError("llm_probability must have one value per row")
+        if semantic.shape != (bank.shape[1],):
+            raise ValueError("semantic_logits must have one value per view")
+        return bank, llm, semantic
+
+    def _semantic_weights(self, semantic_logits: np.ndarray) -> np.ndarray:
+        if not self.use_semantic:
+            return np.full(len(semantic_logits), 1.0 / len(semantic_logits))
+        shifted = semantic_logits - np.max(semantic_logits)
+        weights = np.exp(shifted)
+        return weights / weights.sum()
+
+    def _code_features(
+        self,
+        bank: np.ndarray,
+        llm: np.ndarray,
+        semantic: np.ndarray,
+    ) -> np.ndarray:
+        semantic_weights = self._semantic_weights(semantic)
+        uncertainty = -(bank * np.log(np.clip(bank, 1e-8, 1.0)) + (
+            1.0 - bank
+        ) * np.log(np.clip(1.0 - bank, 1e-8, 1.0)))
+        return np.column_stack((
+            _probability_logit(bank),
+            _probability_logit(llm),
+            bank.mean(axis=1),
+            bank.std(axis=1),
+            bank.max(axis=1) - bank.min(axis=1),
+            bank @ semantic_weights,
+            uncertainty @ semantic_weights,
+        ))
+
+    @staticmethod
+    def _base_features(bank: np.ndarray, llm: np.ndarray) -> np.ndarray:
+        return np.column_stack((bank, llm))
+
+    def _posterior_from_scaled(
+        self, scaled_features: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        squared_distance = self.kmeans_.transform(scaled_features) ** 2
+        logits = -squared_distance / (self.temperature * self.distance_scale_)
+        posterior = _softmax(logits)
+        if self.hard_assignments:
+            posterior = np.eye(self.codebook_size)[np.argmax(posterior, axis=1)]
+        return posterior, np.min(squared_distance, axis=1)
+
+    def _design(self, base: np.ndarray, posterior: np.ndarray) -> np.ndarray:
+        if self.codebook_size == 1:
+            return base
+        centered = posterior - self.code_usage_[None, :]
+        interactions = [centered[:, [index]] * base for index in range(self.codebook_size)]
+        return np.column_stack((base, posterior[:, :-1], *interactions))
+
+    def fit(
+        self,
+        *,
+        response_bank: np.ndarray,
+        llm_probability: np.ndarray,
+        labels: np.ndarray,
+        semantic_logits: np.ndarray,
+    ) -> dict[str, Any]:
+        from sklearn.cluster import KMeans
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+
+        bank, llm, semantic = self._validate(
+            response_bank, llm_probability, semantic_logits,
+        )
+        targets = np.asarray(labels, dtype=np.int8).reshape(-1)
+        if targets.shape != (bank.shape[0],) or len(np.unique(targets)) != 2:
+            raise ValueError("labels must be binary and have one value per row")
+        if self.codebook_size > len(targets):
+            raise ValueError("codebook_size cannot exceed the training rows")
+        code_features = self._code_features(bank, llm, semantic)
+        self.scaler_ = StandardScaler().fit(code_features)
+        scaled = self.scaler_.transform(code_features)
+        self.kmeans_ = KMeans(
+            n_clusters=self.codebook_size,
+            n_init=10,
+            algorithm="lloyd",
+            random_state=self.seed,
+        ).fit(scaled)
+        squared_distance = self.kmeans_.transform(scaled) ** 2
+        self.distance_scale_ = max(
+            float(np.median(np.min(squared_distance, axis=1))), 1e-8,
+        )
+        posterior, nearest_distance = self._posterior_from_scaled(scaled)
+        self.code_usage_ = np.mean(posterior, axis=0)
+        training_posterior = posterior
+        if self.shuffle_assignments:
+            permutation = np.random.default_rng(self.seed + 77).permutation(len(posterior))
+            training_posterior = posterior[permutation]
+        design = self._design(self._base_features(bank, llm), training_posterior)
+        self.classifier_ = LogisticRegression(
+            C=self.regularization_c,
+            max_iter=2000,
+            random_state=self.seed,
+            solver="lbfgs",
+        ).fit(design, targets)
+        self.ood_distance_threshold_ = max(
+            float(np.quantile(nearest_distance, 0.99)), 1e-8,
+        )
+        usage_entropy = entropy(self.code_usage_)
+        return {
+            "code_usage": self.code_usage_.tolist(),
+            "code_usage_perplexity": float(np.exp(usage_entropy)),
+            "minimum_code_mass": float(np.min(self.code_usage_)),
+            "classifier_params": int(
+                self.classifier_.coef_.size + self.classifier_.intercept_.size
+            ),
+            "codebook_values": int(self.kmeans_.cluster_centers_.size),
+            "ood_distance_threshold": self.ood_distance_threshold_,
+        }
+
+    def predict(
+        self,
+        *,
+        response_bank: np.ndarray,
+        llm_probability: np.ndarray,
+        semantic_logits: np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        bank, llm, semantic = self._validate(
+            response_bank, llm_probability, semantic_logits,
+        )
+        scaled = self.scaler_.transform(self._code_features(bank, llm, semantic))
+        posterior, nearest_distance = self._posterior_from_scaled(scaled)
+        probability = self.classifier_.predict_proba(
+            self._design(self._base_features(bank, llm), posterior)
+        )[:, 1]
+        distance_ratio = nearest_distance / self.ood_distance_threshold_
+        ood_confidence = np.ones(len(bank), dtype=np.float64)
+        shifted = distance_ratio > 1.0
+        ood_confidence[shifted] = np.exp(1.0 - distance_ratio[shifted])
+        ood_confidence[distance_ratio >= 4.0] = 0.0
+        return probability, {
+            "posterior": posterior,
+            "ood_confidence": ood_confidence,
+            "nearest_distance": nearest_distance,
+        }
+
+
 def routing_features(
     response_bank: np.ndarray,
     semantic_logits: np.ndarray,
