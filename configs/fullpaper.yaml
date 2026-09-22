@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v1
+  protocol_id: crossfm-align-fullpaper-exploratory-v2
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -18,6 +18,9 @@ runtime:
   static_schema_embedding_cache: true
   response_bank_cache: true
   atomic_task_records: true
+  evaluation_sampling_seed: 260922
+  max_validation_rows: 5000
+  max_test_rows: 10000
 
 routing:
   representation: continuous_posterior
@@ -71,6 +74,11 @@ datasets:
     license: CC-BY-NC-SA-4.0
     target_mode: engagement
     history_days: 90
+    cutoff_warmup_days: 14
+    cutoff_frequency_days: 7
+    train_fraction: 0.20
+    validation_fraction: 0.40
+    embargo_days: 30
     split: temporal
     checksum_required: true
     official_metric: average_precision

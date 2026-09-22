@@ -13,7 +13,7 @@ from crossfm.fullpaper.artifacts import (
     atomic_json, digest_json, reusable_record, write_task_record,
 )
 from crossfm.fullpaper.aggregate import _select_arplus
-from crossfm.fullpaper.data import build_event_cohorts
+from crossfm.fullpaper.data import build_event_cohorts, load_retailrocket
 from crossfm.fullpaper.protocol import balanced_shards, load_protocol, tasks_for_profile
 from crossfm.fullpaper.routing import (
     ARPlusRouter, analytical_route, factorized_view_posterior, routing_features,
@@ -111,6 +111,34 @@ def test_temporal_cohort_builder_uses_only_pre_cutoff_events():
     )
     assert (cohorts["max_feature_time"] < cohorts["cutoff"]).all()
     assert (cohorts["label_window_end"] == cohorts["cutoff"] + pd.Timedelta(days=30)).all()
+
+
+def test_retailrocket_short_timeline_supports_embargoed_three_way_split(tmp_path: Path):
+    rows = []
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    for customer in range(12):
+        for day in range(0, 138, 3):
+            rows.append({
+                "visitorid": customer,
+                "timestamp": int((start + pd.Timedelta(days=day)).timestamp() * 1000),
+                "event": "view",
+                "itemid": customer * 1000 + day,
+            })
+    pd.DataFrame(rows).to_csv(tmp_path / "events.csv", index=False)
+    spec = {
+        "files": {"events": "events.csv"}, "target_mode": "engagement",
+        "history_days": 90, "cutoff_warmup_days": 14, "cutoff_frequency_days": 7,
+        "train_fraction": 0.20, "validation_fraction": 0.40, "embargo_days": 30,
+        "task_description": "Predict lapse.",
+    }
+    bundle = load_retailrocket("retailrocket", spec, tmp_path)
+    assert all(len(bundle.splits[name]) for name in ("train", "validation", "test"))
+    assert bundle.timestamps.iloc[bundle.splits["validation"]].min() >= (
+        bundle.timestamps.iloc[bundle.splits["train"]].max() + pd.Timedelta(days=30)
+    )
+    assert bundle.timestamps.iloc[bundle.splits["test"]].min() >= (
+        bundle.timestamps.iloc[bundle.splits["validation"]].max() + pd.Timedelta(days=30)
+    )
 
 
 def test_asof_audit_rejects_post_cutoff_feature():

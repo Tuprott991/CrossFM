@@ -77,6 +77,7 @@ def build_event_cohorts(
     frame = events.copy()
     frame[timestamp_column] = pd.to_datetime(frame[timestamp_column], utc=True, errors="raise")
     frame = frame.dropna(subset=[customer_column]).sort_values(timestamp_column)
+    frame["__event_day"] = frame[timestamp_column].dt.floor("D")
     rows: list[pd.DataFrame] = []
     windows = (7, 14, 30, 60, 90, history_days)
     for raw_cutoff in sorted(cutoffs):
@@ -88,7 +89,7 @@ def build_event_cohorts(
         recent = history[history[timestamp_column] >= cutoff - pd.Timedelta(days=recent_days)]
         eligibility = recent.groupby(customer_column).agg(
             eligible_events=(timestamp_column, "size"),
-            eligible_days=(timestamp_column, lambda value: value.dt.floor("D").nunique()),
+            eligible_days=("__event_day", "nunique"),
         )
         eligible = eligibility[
             (eligibility["eligible_events"] >= minimum_events)
@@ -106,9 +107,9 @@ def build_event_cohorts(
             selected = history[history[timestamp_column] >= cutoff - pd.Timedelta(days=window)]
             grouped = selected.groupby(customer_column)
             base[f"event_count_{window}d"] = grouped.size().reindex(eligible, fill_value=0)
-            base[f"active_days_{window}d"] = grouped[timestamp_column].agg(
-                lambda value: value.dt.floor("D").nunique()
-            ).reindex(eligible, fill_value=0)
+            base[f"active_days_{window}d"] = grouped["__event_day"].nunique().reindex(
+                eligible, fill_value=0,
+            )
             if value_column and value_column in selected:
                 values = pd.to_numeric(selected[value_column], errors="coerce").fillna(0.0)
                 selected = selected.assign(__value=values)
@@ -147,7 +148,10 @@ def build_event_cohorts(
 
 def _bundle_from_cohorts(dataset_id: str, cohorts: pd.DataFrame, spec: dict[str, Any]) -> DatasetBundle:
     split = temporal_split(
-        cohorts["cutoff"], embargo_days=int(spec.get("embargo_days", 30)),
+        cohorts["cutoff"],
+        train_fraction=float(spec.get("train_fraction", 0.60)),
+        validation_fraction=float(spec.get("validation_fraction", 0.20)),
+        embargo_days=int(spec.get("embargo_days", 30)),
     )
     indices = {"train": split.train, "validation": split.validation, "test": split.test}
     excluded = {"target", "customer_id", "cutoff", "max_feature_time", "label_window_end"}
@@ -211,9 +215,13 @@ def load_retailrocket(dataset_id: str, spec: dict[str, Any], data_root: Path) ->
     raw["timestamp"] = pd.to_datetime(raw["timestamp"], unit="ms", utc=True)
     raw["value"] = (raw["event"].astype(str) == "transaction").astype(float)
     timestamps = raw["timestamp"]
+    history_days = int(spec.get("history_days", 90))
+    warmup_days = int(spec.get("cutoff_warmup_days", min(history_days, 30)))
+    frequency_days = int(spec.get("cutoff_frequency_days", 14))
     cutoffs = list(pd.date_range(
-        timestamps.min().ceil("D") + pd.Timedelta(days=90),
-        timestamps.max().floor("D") - pd.Timedelta(days=30), freq="14D", tz="UTC",
+        timestamps.min().ceil("D") + pd.Timedelta(days=warmup_days),
+        timestamps.max().floor("D") - pd.Timedelta(days=30),
+        freq=f"{frequency_days}D", tz="UTC",
     ))
     target_mode = spec.get("target_mode", "engagement")
     qualifying = {"transaction"} if target_mode == "purchase" else {
@@ -221,7 +229,7 @@ def load_retailrocket(dataset_id: str, spec: dict[str, Any], data_root: Path) ->
     }
     cohorts = build_event_cohorts(
         raw, customer_column="customer_id", timestamp_column="timestamp", cutoffs=cutoffs,
-        history_days=int(spec.get("history_days", 90)), value_column="value",
+        history_days=history_days, value_column="value",
         item_column="item_id", event_type_column="event", qualifying_types=qualifying,
         minimum_events=3,
     )

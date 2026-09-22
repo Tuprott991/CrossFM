@@ -83,6 +83,7 @@ def _safe_env(token: str) -> dict[str, str]:
     }
     env["KAGGLE_API_TOKEN"] = token
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONUTF8"] = "1"
     return env
 
 
@@ -131,6 +132,18 @@ def _status(token: str, ref: str) -> str:
     return (result.stdout + result.stderr).strip()
 
 
+def _kernel_ref(token: str, lane: Lane, owner: str) -> str:
+    result = _run([
+        "kaggle", "kernels", "list", "--mine", "--sort-by", "dateRun",
+        "--page-size", "30", "--format", "json",
+    ], token=token)
+    matches = [
+        str(row["ref"]) for row in _json_output(result)
+        if row.get("title") == lane.title
+    ]
+    return matches[0] if matches else f"{owner}/{lane.kernel_slug}"
+
+
 def _active_recent(token: str) -> list[str]:
     result = _run([
         "kaggle", "kernels", "list", "--mine", "--sort-by", "dateRun",
@@ -176,10 +189,10 @@ def _preflight_lane(lane: Lane, token: str) -> dict[str, Any]:
     }
 
 
-def preflight() -> list[dict[str, Any]]:
+def preflight(lanes: tuple[Lane, ...] = LANES) -> list[dict[str, Any]]:
     tokens = _load_tokens()
-    with ThreadPoolExecutor(max_workers=len(LANES)) as pool:
-        rows = list(pool.map(lambda lane: _preflight_lane(lane, tokens[lane.account]), LANES))
+    with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+        rows = list(pool.map(lambda lane: _preflight_lane(lane, tokens[lane.account]), lanes))
     owners = [str(row["owner"]) for row in rows]
     if len(set(owners)) != len(owners):
         raise RuntimeError(f"Duplicate Kaggle owners detected: {owners}")
@@ -257,33 +270,36 @@ def upload_and_launch(lane: Lane, owner: str, token: str, bundle: Path) -> dict[
         _run(["kaggle", "datasets", "create", "-p", str(dataset_dir), "-r", "zip"], token=token)
     _verify_remote_bundle(token, dataset_ref, dataset_dir)
     _run(["kaggle", "kernels", "push", "-p", str(bundle / "kernel")], token=token)
-    kernel_ref = f"{owner}/{lane.kernel_slug}"
+    kernel_ref = _kernel_ref(token, lane, owner)
     return {
         "owner": owner, "profile": lane.profile, "dataset": dataset_ref,
         "kernel": kernel_ref, "status": _status(token, kernel_ref),
     }
 
 
-def launch(*, reuse_bundles: bool = False) -> list[dict[str, str]]:
+def launch(*, reuse_bundles: bool = False, accounts: set[int] | None = None) -> list[dict[str, str]]:
+    lanes = tuple(lane for lane in LANES if accounts is None or lane.account in accounts)
+    if not lanes:
+        raise ValueError("No Kaggle lanes selected")
     tokens = _load_tokens()
-    checks = preflight()
+    checks = preflight(lanes)
     owners = {int(row["account"]): str(row["owner"]) for row in checks}
     if reuse_bundles:
-        bundles = {lane.account: ROOT / "dist" / "fullpaper" / lane.profile for lane in LANES}
-        for lane in LANES:
+        bundles = {lane.account: ROOT / "dist" / "fullpaper" / lane.profile for lane in lanes}
+        for lane in lanes:
             _run([
                 sys.executable, str(ROOT / "scripts" / "validate_fullpaper_bundle.py"),
                 str(bundles[lane.account]), "--profile", lane.profile,
             ])
     else:
-        bundles = {lane.account: build_lane(lane, owners[lane.account]) for lane in LANES}
+        bundles = {lane.account: build_lane(lane, owners[lane.account]) for lane in lanes}
     results = []
-    with ThreadPoolExecutor(max_workers=len(LANES)) as pool:
+    with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
         futures = {
             pool.submit(
                 upload_and_launch, lane, owners[lane.account], tokens[lane.account],
                 bundles[lane.account],
-            ): lane for lane in LANES
+            ): lane for lane in lanes
         }
         for future in as_completed(futures):
             results.append(future.result())
@@ -295,7 +311,7 @@ def statuses() -> list[dict[str, str]]:
     results = []
     for lane in LANES:
         owner = _owner(tokens[lane.account])
-        ref = f"{owner}/{lane.kernel_slug}"
+        ref = _kernel_ref(tokens[lane.account], lane, owner)
         results.append({"profile": lane.profile, "kernel": ref, "status": _status(tokens[lane.account], ref)})
     return results
 
@@ -316,7 +332,7 @@ def download() -> list[dict[str, str]]:
     rows = []
     for lane in LANES:
         owner = _owner(tokens[lane.account])
-        ref = f"{owner}/{lane.kernel_slug}"
+        ref = _kernel_ref(tokens[lane.account], lane, owner)
         status = _status(tokens[lane.account], ref)
         if "COMPLETE" not in status.upper() and "ERROR" not in status.upper():
             rows.append({"kernel": ref, "status": status, "downloaded": "false"})
@@ -333,11 +349,13 @@ def main() -> None:
     parser.add_argument("command", choices=("preflight", "launch", "status", "monitor", "download"))
     parser.add_argument("--poll-seconds", type=int, default=120)
     parser.add_argument("--reuse-bundles", action="store_true")
+    parser.add_argument("--accounts", help="Comma-separated 1-based account lanes")
     args = parser.parse_args()
+    accounts = {int(value) for value in args.accounts.split(",")} if args.accounts else None
     if args.command == "preflight":
         value = preflight()
     elif args.command == "launch":
-        value = launch(reuse_bundles=args.reuse_bundles)
+        value = launch(reuse_bundles=args.reuse_bundles, accounts=accounts)
     elif args.command == "status":
         value = statuses()
     elif args.command == "monitor":

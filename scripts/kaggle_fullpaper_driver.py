@@ -113,7 +113,7 @@ def main() -> None:
         data_root.mkdir(parents=True, exist_ok=True)
     dependencies = manifest["dependencies"]
     run_checked([
-        sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+        sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
         *dependencies,
     ])
     run_checked([sys.executable, "-m", "pip", "install", "--quiet", "--no-deps", str(wheel)])

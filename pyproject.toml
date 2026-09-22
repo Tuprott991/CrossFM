@@ -24,7 +24,7 @@ gpu = [
 ]
 test = ["pytest==8.3.5"]
 fullpaper = [
-  "pyarrow==18.1.0",
+  "pyarrow==24.0.0",
   "openpyxl==3.1.5",
   "data-foundry==0.0.5",
   "catboost==1.2.10",

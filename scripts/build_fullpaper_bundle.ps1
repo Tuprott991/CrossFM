@@ -65,7 +65,7 @@ $runId = "$($profileInfo.protocol)-$slugProfile-$($commit.Substring(0, 8))"
 $dependencies = @(
     'numpy==1.26.4', 'pandas==2.2.3', 'python-dotenv==1.0.1',
     'PyYAML==6.0.2', 'scikit-learn==1.6.1',
-    'pyarrow==18.1.0', 'openpyxl==3.1.5', 'tabicl==2.2.0',
+    'pyarrow==24.0.0', 'openpyxl==3.1.5', 'tabicl==2.2.0',
     'transformers==4.57.6', 'huggingface-hub==0.36.0', 'safetensors==0.7.0'
 )
 if ($profileInfo.has_beyondarena) { $dependencies += 'data-foundry==0.0.5' }

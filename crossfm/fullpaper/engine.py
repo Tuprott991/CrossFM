@@ -54,6 +54,18 @@ def _stratified_budget(indices: np.ndarray, labels: np.ndarray, budget: int | st
     return np.sort(selected)
 
 
+def _stratified_cap(indices: np.ndarray, labels: np.ndarray, cap: int, seed: int) -> np.ndarray:
+    if cap >= len(indices):
+        return np.asarray(indices)
+    from sklearn.model_selection import train_test_split
+
+    selected, _ = train_test_split(
+        np.asarray(indices), train_size=cap, random_state=seed,
+        stratify=np.asarray(labels)[indices],
+    )
+    return np.sort(selected)
+
+
 def _router_split(indices: np.ndarray, labels: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray]:
     from sklearn.model_selection import train_test_split
 
@@ -128,12 +140,36 @@ class FullPaperEngine:
         return self.output / "cache" / task.dataset / stem / f"{kind}.npz"
 
     def _slice(self, bundle: DatasetBundle, task: ExperimentTask):
+        labels = bundle.target.to_numpy()
         train_indices = _stratified_budget(
-            bundle.splits["train"], bundle.target.to_numpy(), task.context_budget, task.seed,
+            bundle.splits["train"], labels, task.context_budget, task.seed,
         )
-        validation_indices = bundle.splits["validation"]
-        test_indices = bundle.splits["test"]
+        sampling_seed = int(self.config["runtime"].get("evaluation_sampling_seed", 260922))
+        validation_indices = _stratified_cap(
+            bundle.splits["validation"], labels,
+            int(self.config["runtime"].get("max_validation_rows", len(bundle.splits["validation"]))),
+            sampling_seed,
+        )
+        test_indices = _stratified_cap(
+            bundle.splits["test"], labels,
+            int(self.config["runtime"].get("max_test_rows", len(bundle.splits["test"]))),
+            sampling_seed + 1,
+        )
         return train_indices, validation_indices, test_indices
+
+    def _static_llm_train_indices(self, bundle: DatasetBundle, task: ExperimentTask) -> np.ndarray:
+        """Cover every router split that consumes the shared seed-neutral LLM cache."""
+        profile = self.config["profiles"][task.profile]
+        seeds = profile.get("seeds", self.config["experiment"]["seeds"])
+        budgets = profile.get("context_budgets", self.config["experiment"]["context_budgets"])
+        labels = bundle.target.to_numpy()
+        router_indices = []
+        for budget in budgets:
+            for seed in seeds:
+                train = _stratified_budget(bundle.splits["train"], labels, budget, int(seed))
+                _, router = _router_split(train, labels, int(seed))
+                router_indices.append(router)
+        return np.unique(np.concatenate(router_indices))
 
     def run_response_bank(self, task: ExperimentTask, method: dict[str, Any]) -> dict[str, Any]:
         bundle = self.dataset(task.dataset)
@@ -178,7 +214,7 @@ class FullPaperEngine:
         train_idx, validation_idx, test_idx = self._slice(bundle, task)
         fit_idx, router_idx = _router_split(train_idx, bundle.target.to_numpy(), task.seed)
         static_llm = task.method == "cache_llm"
-        llm_train_indices = bundle.splits["train"] if static_llm else router_idx
+        llm_train_indices = self._static_llm_train_indices(bundle, task) if static_llm else router_idx
         dataset_spec = self.config["datasets"][task.dataset]
         accelerator = self.config["profiles"][task.profile]["accelerator"]
         dtype = "float16" if accelerator == "kaggle_t4x2" else method.get("dtype", "bfloat16")
