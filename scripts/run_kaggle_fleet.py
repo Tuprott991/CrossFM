@@ -41,22 +41,22 @@ class Lane:
 # that account to have accepted the license and configured TABPFN_TOKEN.
 LANES = (
     Lane(
-        1, "author_b_kaggle_d4", "crossfm-fullpaper-d4-exploratory-v1",
+        1, "author_b_kaggle_d4", "crossfm-full-paper-d4-exploratory-v1",
         "CrossFM Full Paper D4 Exploratory V1",
         "alinoranianesfahani", "iranian-churn-dataset",
     ),
     Lane(
         2, "author_b_kaggle_frontier_temporal",
-        "crossfm-fullpaper-frontier-temporal-exploratory-v1",
+        "crossfm-frontier-temporal-exploratory-v1",
         "CrossFM Frontier Temporal Exploratory V1",
     ),
     Lane(
         3, "author_b_kaggle_frontier_semantic",
-        "crossfm-fullpaper-frontier-semantic-exploratory-v1",
+        "crossfm-frontier-semantic-exploratory-v1",
         "CrossFM Frontier Semantic Exploratory V1",
     ),
     Lane(
-        4, "author_b_kaggle_d3", "crossfm-fullpaper-d3-exploratory-v1",
+        4, "author_b_kaggle_d3", "crossfm-full-paper-d3-exploratory-v1",
         "CrossFM Full Paper D3 Exploratory V1",
         "retailrocket", "ecommerce-dataset",
     ),
