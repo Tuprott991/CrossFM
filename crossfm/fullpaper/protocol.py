@@ -74,6 +74,16 @@ def validate_protocol(config: dict[str, Any]) -> None:
                 f"Profile {profile} references unknown datasets={unknown_datasets}, "
                 f"methods={unknown_methods}"
             )
+        profile_methods = set(spec.get("methods", []))
+        for method_name in profile_methods:
+            method = methods[method_name]
+            for dependency_key in ("response_cache", "llm_cache", "tool_response_cache"):
+                dependency = method.get(dependency_key)
+                if dependency and dependency not in profile_methods:
+                    raise ValueError(
+                        f"Profile {profile} schedules {method_name} without required "
+                        f"{dependency_key} producer {dependency}"
+                    )
         if spec.get("accelerator") not in {"h100_80gb", "kaggle_t4x2", "cpu"}:
             raise ValueError(f"Invalid accelerator for profile {profile}")
         if spec.get("owner_role") not in {"author_a", "author_b", "any_author"}:

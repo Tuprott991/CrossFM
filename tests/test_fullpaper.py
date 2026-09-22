@@ -17,7 +17,8 @@ from crossfm.fullpaper.artifacts import (
 from crossfm.fullpaper.aggregate import _select_arplus
 from crossfm.fullpaper.engine import _group_cap, _router_split
 from crossfm.fullpaper.data import (
-    build_event_cohorts, load_beyondarena, load_manifest_table, load_retailrocket,
+    _binary_target, build_event_cohorts, load_beyondarena, load_manifest_table,
+    load_retailrocket,
 )
 from crossfm.fullpaper.models import (
     _FROZEN_MODEL_CACHE, _evict_frozen_models, _sklearn_matrix, candidate_views,
@@ -44,7 +45,7 @@ FLEET_SPEC.loader.exec_module(FLEET)
 
 def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
-    assert config["experiment"]["protocol_id"] == "crossfm-align-fullpaper-exploratory-v7"
+    assert config["experiment"]["protocol_id"] == "crossfm-align-fullpaper-exploratory-v8"
     assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
     assert "llm_to_tfm_compute_matched" not in config["methods"]
     assert "tfm_to_llm" not in config["methods"]
@@ -53,6 +54,7 @@ def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     assert config["profiles"]["author_a_h100_scale"]["selection_frozen_from"] == (
         "author_a_h100_primary"
     )
+    assert "cache_llm_tool" in config["profiles"]["author_b_kaggle_d4"]["methods"]
     for profile in config["profiles"]:
         tasks = tasks_for_profile(config, profile)
         assert tasks
@@ -60,6 +62,21 @@ def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
         assert all(task.config_digest == digest_json(config) for task in tasks)
         stages = {task.stage for task in tasks}
         assert stages == {"response_bank", "llm_cache", "evaluate"}
+
+
+def test_protocol_rejects_missing_cache_producer():
+    config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
+    config["profiles"]["author_b_kaggle_d4"]["methods"].remove("cache_llm_tool")
+    with pytest.raises(ValueError, match="without required llm_cache producer"):
+        tasks_for_profile(config, "author_b_kaggle_d4")
+
+
+def test_binary_target_requires_and_preserves_explicit_positive_class():
+    values = pd.Series(pd.Categorical(["No", "Yes", "No", "Yes"]))
+    encoded = _binary_target(values, dataset_id="bank", positive_label="Yes")
+    assert encoded.tolist() == [0, 1, 0, 1]
+    with pytest.raises(ValueError, match="requires an explicit positive_label"):
+        _binary_target(values, dataset_id="bank")
 
 
 def test_h100_model_preflight_resolves_declared_model_families(monkeypatch, tmp_path: Path):

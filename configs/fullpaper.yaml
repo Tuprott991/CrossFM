@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v7
+  protocol_id: crossfm-align-fullpaper-exploratory-v8
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -175,6 +175,7 @@ datasets:
     fold: 0
     checksum_required: true
     official_metric: roc_auc
+    positive_label: Yes
     task_description: Predict whether this bank customer will churn.
     cost: 1.0
     views:
@@ -335,7 +336,7 @@ profiles:
     owner_role: author_b
     accelerator: kaggle_t4x2
     datasets: [d4_iranian_churn]
-    methods: [cache_tabicl, cache_tabpfn3, cache_llm, logistic, catboost, lightgbm, xgboost, tabicl_only, tabpfn3_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_gate_disabled, crossfm_ar_tabpfn3]
+    methods: [cache_tabicl, cache_tabpfn3, cache_llm, cache_llm_tool, logistic, catboost, lightgbm, xgboost, tabicl_only, tabpfn3_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_gate_disabled, crossfm_ar_tabpfn3]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical, aliases, anonymized]
     context_budgets: [32, 128, 512, 2048, full]

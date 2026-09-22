@@ -82,6 +82,32 @@ def _read_table(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _binary_target(
+    values: pd.Series, *, dataset_id: str, positive_label: Any | None = None,
+) -> pd.Series:
+    """Encode a binary target without silently assigning its positive class."""
+
+    if values.isna().any():
+        raise ValueError(f"Missing targets are forbidden: {dataset_id}")
+    numeric = pd.to_numeric(values, errors="coerce")
+    if numeric.notna().all() and set(numeric.unique()).issubset({0, 1}):
+        return numeric.astype(int)
+    normalized = values.astype("string").str.strip().str.casefold()
+    classes = set(normalized.unique())
+    if positive_label is None:
+        raise ValueError(
+            f"Non-numeric target for {dataset_id} requires an explicit positive_label; "
+            f"observed classes={sorted(classes)}"
+        )
+    positive = str(positive_label).strip().casefold()
+    if len(classes) != 2 or positive not in classes:
+        raise ValueError(
+            f"Invalid positive_label {positive_label!r} for {dataset_id}; "
+            f"observed classes={sorted(classes)}"
+        )
+    return (normalized == positive).astype(int)
+
+
 def build_event_cohorts(
     events: pd.DataFrame,
     *,
@@ -355,7 +381,10 @@ def load_beyondarena(dataset_id: str, spec: dict[str, Any], _: Path) -> DatasetB
     container = BEYOND_ARENA.get_dataset(spec["unique_name"])
     frame = container.dataset.copy()
     target_column = container.task_metadata.target_column_name
-    target = frame.pop(target_column).astype(int)
+    target = _binary_target(
+        frame.pop(target_column), dataset_id=dataset_id,
+        positive_label=spec.get("positive_label"),
+    )
     group_on = getattr(container.task_metadata, "group_on", None)
     if group_on:
         group_columns = [group_on] if isinstance(group_on, str) else list(group_on)
