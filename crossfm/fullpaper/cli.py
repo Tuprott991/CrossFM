@@ -13,7 +13,7 @@ import sys
 import traceback
 
 from .aggregate import aggregate_run
-from .artifacts import atomic_json
+from .artifacts import atomic_json, sha256_file
 from .engine import FullPaperEngine, execute_task
 from .models import configure_h100_math
 from .protocol import balanced_shards, load_protocol, tasks_for_profile
@@ -51,6 +51,46 @@ def _device(accelerator: str) -> str:
     if not torch.cuda.is_available():
         raise RuntimeError("GPU profile requested but CUDA is unavailable")
     return "cuda:0"
+
+
+def _model_preflight(config: dict, profile: str) -> dict:
+    """Resolve pinned model metadata and the compact TabPFN checkpoint up front."""
+    spec = config["profiles"][profile]
+    methods = [config["methods"][name] for name in spec.get("methods", [])]
+    report: dict[str, object] = {}
+    if any(method.get("backend") == "tabicl" for method in methods):
+        from tabicl import TabICLClassifier
+
+        report["tabicl_import"] = TabICLClassifier.__name__
+    tabpfn_methods = [method for method in methods if method.get("backend") == "tabpfn3"]
+    if tabpfn_methods:
+        from huggingface_hub import hf_hub_download
+        from tabpfn import TabPFNClassifier
+
+        params = tabpfn_methods[0]["params"]
+        checkpoint = Path(hf_hub_download(
+            repo_id=params["hf_repo_id"], filename=params["hf_filename"],
+            revision=params["hf_revision"],
+        ))
+        observed = sha256_file(checkpoint)
+        if observed != params["hf_sha256"]:
+            raise RuntimeError(f"TabPFN doctor checksum mismatch: {observed}")
+        report["tabpfn_import"] = TabPFNClassifier.__name__
+        report["tabpfn_checkpoint_sha256"] = observed
+    llm_methods = [method for method in methods if method.get("model_id")]
+    if llm_methods:
+        from transformers import AutoConfig, AutoTokenizer
+
+        method = llm_methods[0]
+        model_id, revision = method["model_id"], method["revision"]
+        model_config = AutoConfig.from_pretrained(model_id, revision=revision)
+        tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
+        report.update({
+            "llm_model_id": model_id, "llm_revision": revision,
+            "llm_architecture": type(model_config).__name__,
+            "llm_tokenizer": type(tokenizer).__name__,
+        })
+    return report
 
 
 def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
@@ -120,6 +160,8 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
             raise RuntimeError(f"Expected one visible H100 80GB, found {report['gpus']}")
         if spec["accelerator"] == "h100_80gb" and not report["bf16_supported"]:
             raise RuntimeError("Visible H100 does not report BF16 support")
+        if spec["accelerator"] == "h100_80gb":
+            report["model_preflight"] = _model_preflight(config, profile)
     atomic_json(output / "doctor.json", report)
     return report
 

@@ -62,6 +62,41 @@ def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
         assert stages == {"response_bank", "llm_cache", "evaluate"}
 
 
+def test_h100_model_preflight_resolves_declared_model_families(monkeypatch, tmp_path: Path):
+    from crossfm.fullpaper.cli import _model_preflight
+
+    checkpoint = tmp_path / "tabpfn.ckpt"
+    checkpoint.write_bytes(b"checkpoint")
+    checksum = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    class FakeTabICL: pass
+    class FakeTabPFN: pass
+    class FakeAutoConfig:
+        @staticmethod
+        def from_pretrained(*_, **__): return types.SimpleNamespace()
+    class FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(*_, **__): return types.SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "tabicl", types.SimpleNamespace(TabICLClassifier=FakeTabICL))
+    monkeypatch.setitem(sys.modules, "tabpfn", types.SimpleNamespace(TabPFNClassifier=FakeTabPFN))
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **_: str(checkpoint))
+    monkeypatch.setattr("transformers.AutoConfig", FakeAutoConfig)
+    monkeypatch.setattr("transformers.AutoTokenizer", FakeAutoTokenizer)
+    config = {
+        "profiles": {"p": {"methods": ["t", "p", "l"]}},
+        "methods": {
+            "t": {"backend": "tabicl"},
+            "p": {"backend": "tabpfn3", "params": {
+                "hf_repo_id": "repo", "hf_filename": "file", "hf_revision": "rev",
+                "hf_sha256": checksum,
+            }},
+            "l": {"model_id": "llm", "revision": "rev"},
+        },
+    }
+    report = _model_preflight(config, "p")
+    assert report["tabpfn_checkpoint_sha256"] == checksum
+    assert report["llm_model_id"] == "llm"
+
+
 def test_cost_balanced_sharding_is_deterministic_and_complete():
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
     tasks = tasks_for_profile(config, "author_b_kaggle_frontier_temporal")
