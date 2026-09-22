@@ -72,7 +72,7 @@ if ($profileInfo.has_beyondarena) { $dependencies += 'data-foundry==0.0.5' }
 if ($profileInfo.methods -contains 'catboost') { $dependencies += 'catboost==1.2.10' }
 if ($profileInfo.methods -contains 'lightgbm') { $dependencies += 'lightgbm==4.7.0' }
 if ($profileInfo.methods -contains 'xgboost') { $dependencies += 'xgboost==3.2.0' }
-if (($profileInfo.methods -contains 'cache_tabpfn35') -or ($profileInfo.methods -contains 'tabpfn35_only')) { $dependencies += 'tabpfn==9.0.0' }
+if (($profileInfo.methods -contains 'cache_tabpfn3') -or ($profileInfo.methods -contains 'tabpfn3_only')) { $dependencies += 'tabpfn==9.0.0' }
 if ($profileInfo.methods -contains 'tabm') { $dependencies += 'tabm==0.0.3' }
 if ($profileInfo.methods -contains 'autogluon') { $dependencies += 'autogluon.tabular==1.6.3' }
 $manifest = [ordered]@{

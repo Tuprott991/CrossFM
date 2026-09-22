@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import importlib.util
 from pathlib import Path
 import sys
@@ -154,6 +155,48 @@ def test_tabicl_prediction_is_memory_bounded_by_chunks(monkeypatch):
         seed=7, device="cpu", params={"prediction_chunk_size": 256},
     )
     assert calls == [256, 256, 88, 256, 256, 1]
+
+
+def test_tabpfn3_uses_revision_pinned_verified_huggingface_checkpoint(
+    monkeypatch, tmp_path: Path,
+):
+    checkpoint = tmp_path / "tabpfn3.ckpt"
+    checkpoint.write_bytes(b"official-checkpoint-fixture")
+    expected = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    downloads = []
+    constructors = []
+
+    def fake_download(**kwargs):
+        downloads.append(kwargs)
+        return str(checkpoint)
+
+    class FakeTabPFN:
+        def __init__(self, **kwargs):
+            constructors.append(kwargs)
+
+        def fit(self, _x, _y):
+            return self
+
+        def predict_proba(self, values):
+            return np.tile([0.3, 0.7], (len(values), 1))
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    monkeypatch.setitem(sys.modules, "tabpfn", types.SimpleNamespace(TabPFNClassifier=FakeTabPFN))
+    _FROZEN_MODEL_CACHE.clear()
+    result = fit_predict_tabular(
+        "tabpfn3", pd.DataFrame({"x": range(10)}), np.asarray([0, 1] * 5),
+        pd.DataFrame({"x": range(2)}), pd.DataFrame({"x": range(3)}),
+        seed=11, device="cpu", params={
+            "hf_repo_id": "Prior-Labs/tabpfn_3", "hf_revision": "pinned-revision",
+            "hf_filename": "binary.ckpt", "hf_sha256": expected,
+        },
+    )
+    assert downloads == [{
+        "repo_id": "Prior-Labs/tabpfn_3", "filename": "binary.ckpt",
+        "revision": "pinned-revision",
+    }]
+    assert constructors[0]["model_path"] == str(checkpoint)
+    assert np.array_equal(result.test_probability, np.full(3, 0.7))
 
 
 def test_retailrocket_short_timeline_supports_embargoed_three_way_split(tmp_path: Path):

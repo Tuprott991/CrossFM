@@ -37,8 +37,7 @@ class Lane:
 
 # One T4x2 notebook per legitimate collaborator initially. This consumes eight
 # GPUs concurrently while preserving each account's second session for a bounded
-# retry. D4 stays on the established account because TabPFN-3.5 also requires
-# that account to have accepted the license and configured TABPFN_TOKEN.
+# retry. D4 uses the official revision-pinned Hugging Face TabPFN-3 checkpoint.
 LANES = (
     Lane(
         1, "author_b_kaggle_d4", "crossfm-full-paper-d4-exploratory-v1",

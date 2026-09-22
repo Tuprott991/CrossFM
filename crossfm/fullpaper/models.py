@@ -30,6 +30,14 @@ def _finite_probability(value: np.ndarray) -> np.ndarray:
     return np.clip(value, 1e-6, 1.0 - 1e-6)
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _sklearn_matrix(train: pd.DataFrame, validation: pd.DataFrame, test: pd.DataFrame):
     from sklearn.compose import ColumnTransformer
     from sklearn.impute import SimpleImputer
@@ -227,19 +235,48 @@ def fit_predict_tabular(
         validation_probability = predict_chunks(x_validation)
         test_probability = predict_chunks(x_test)
         params["prediction_chunk_size"] = prediction_chunk_size
-    elif method in {"tabpfn", "tabpfn35"}:
+    elif method in {"tabpfn", "tabpfn3"}:
         try:
             from tabpfn import TabPFNClassifier
         except ImportError as exc:
             raise RuntimeError("Install the pinned official TabPFN package/checkpoint") from exc
-        key = ("tabpfn35", device, seed, tuple(sorted((name, repr(value)) for name, value in params.items())))
+        repo_id = params.pop("hf_repo_id", None)
+        revision = params.pop("hf_revision", None)
+        filename = params.pop("hf_filename", None)
+        expected_sha256 = params.pop("hf_sha256", None)
+        checkpoint = None
+        if repo_id or revision or filename or expected_sha256:
+            if not all((repo_id, revision, filename, expected_sha256)):
+                raise ValueError("TabPFN Hugging Face provenance must be fully specified")
+            from huggingface_hub import hf_hub_download
+
+            checkpoint = Path(hf_hub_download(
+                repo_id=str(repo_id), filename=str(filename), revision=str(revision),
+            ))
+            observed_sha256 = _sha256(checkpoint)
+            if observed_sha256 != expected_sha256:
+                raise RuntimeError(
+                    f"TabPFN checkpoint SHA-256 mismatch: {observed_sha256} != {expected_sha256}"
+                )
+        key = (
+            "tabpfn3", device, seed, str(repo_id), str(revision), str(filename),
+            tuple(sorted((name, repr(value)) for name, value in params.items())),
+        )
         model = _FROZEN_MODEL_CACHE.get(key)
         if model is None:
-            model = TabPFNClassifier(device=device, random_state=seed, **params)
+            model = TabPFNClassifier(
+                device=device, random_state=seed,
+                **({"model_path": str(checkpoint)} if checkpoint else {}), **params,
+            )
             _FROZEN_MODEL_CACHE[key] = model
         model.fit(train, y_train)
         validation_probability = model.predict_proba(validation)[:, 1]
         test_probability = model.predict_proba(test)[:, 1]
+        if checkpoint is not None:
+            params.update({
+                "hf_repo_id": repo_id, "hf_revision": revision,
+                "hf_filename": filename, "hf_sha256": expected_sha256,
+            })
     else:
         raise KeyError(f"Unsupported tabular method: {method}")
     return PredictionResult(

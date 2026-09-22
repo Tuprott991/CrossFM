@@ -65,7 +65,7 @@ def launch_stage(
                 "OPENBLAS_NUM_THREADS": "2", "NUMEXPR_NUM_THREADS": "2",
                 "TOKENIZERS_PARALLELISM": "false", "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
                 "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,max_split_size_mb:128",
-                "HF_HUB_DISABLE_PROGRESS_BARS": "1", "HF_XET_HIGH_PERFORMANCE": "1",
+                "HF_HUB_DISABLE_PROGRESS_BARS": "1", "HF_HUB_DISABLE_XET": "1",
             })
             handle = (logs / f"{stage}_rank{rank}.log").open("w", encoding="utf-8")
             handles.append(handle)
@@ -119,17 +119,21 @@ def main() -> None:
     run_checked([sys.executable, "-m", "pip", "install", "--quiet", "--no-deps", str(wheel)])
     import yaml
     frozen_config = yaml.safe_load(config.read_text(encoding="utf-8"))
-    profile_methods = set(frozen_config["profiles"][PROFILE]["methods"])
-    if any("tabpfn" in method for method in profile_methods) and not os.environ.get("TABPFN_TOKEN"):
-        try:
-            from kaggle_secrets import UserSecretsClient
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    profile_methods = frozen_config["profiles"][PROFILE]["methods"]
+    for method_name in profile_methods:
+        params = frozen_config["methods"][method_name].get("params", {})
+        if "hf_repo_id" not in params:
+            continue
+        from huggingface_hub import hf_hub_download
 
-            os.environ["TABPFN_TOKEN"] = UserSecretsClient().get_secret("TABPFN_TOKEN")
-        except Exception as exc:
-            raise RuntimeError(
-                "TabPFN-3.5 profile requires the private Kaggle secret TABPFN_TOKEN "
-                "after accepting the official model license"
-            ) from exc
+        checkpoint = Path(hf_hub_download(
+            repo_id=params["hf_repo_id"], filename=params["hf_filename"],
+            revision=params["hf_revision"],
+        ))
+        if sha256(checkpoint) != params["hf_sha256"]:
+            raise RuntimeError(f"Immutable model hash mismatch: {checkpoint}")
     run_dir = WORKING / manifest["run_id"]
     run_dir.mkdir(parents=True, exist_ok=False)
     run_checked([

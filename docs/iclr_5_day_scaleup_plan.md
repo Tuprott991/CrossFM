@@ -133,7 +133,7 @@ Rules for this track:
 
 The full real-data grid remains D1/D2. To fit the deadline, B1–B4 use a reduced but causally sufficient grid: CatBoost, strongest available standalone TFM, LLM-only, tuned probability ensemble, semantic one-way selector, CrossFM-AR, CrossFM-AR+, and no-semantic/shuffled-message ablations. B5/B6 use CatBoost, standalone TFM, ensemble, AR, and AR+ only.
 
-[TabPFN-3.5](https://arxiv.org/abs/2609.17895) is a frontier replication rather than the sole backbone. If an official reproducible checkpoint/interface and compatible license are available, run it on D1, D2, and B1–B4 with a pinned revision. Otherwise record the access failure and use pinned TabPFN v2.5; TabICLv2 remains the primary open backbone so the claim does not depend on one newly released system.
+[TabPFN-3](https://huggingface.co/Prior-Labs/tabpfn_3) is a frontier replication rather than the sole backbone. Use the official binary-classification checkpoint with its pinned repository revision and verified SHA-256 on D1, D2, and B1–B4. TabICLv2 remains the primary open backbone so the claim does not depend on one newly released system.
 
 ### Temporal labeling
 
@@ -190,7 +190,7 @@ Current strong references include [TabPFN v2](https://www.nature.com/articles/s4
 | Tabular DL | TabM | official search space; 20 trials or 2 GPU-hours |
 | TFM | TabPFN v2/v2.5 | official inference within limits |
 | TFM | TabICLv2 | pinned official checkpoint |
-| Frontier TFM | TabPFN-3.5 | pinned official interface on D1/D2 and B1–B4 if reproducible; v2.5 fallback |
+| Frontier TFM | TabPFN-3 | pinned official Hugging Face binary checkpoint on D1/D2 and B1–B4 |
 | LLM | Qwen2.5-7B-Instruct | constrained LOW/HIGH likelihood |
 | Fusion | tuned probability ensemble | LLM + full-table TFM |
 | One-way | semantic view selector | schema/LLM → TFM view |
@@ -218,7 +218,7 @@ Reduced methods: TFM, LLM, ensemble, one-way selector, AR, AR+.
 Standardized-transfer replication:
 
 - B1–B4: Qwen2.5-7B + TabICLv2 reduced grid.
-- B1–B4: TabPFN-3.5 or pinned v2.5 replication for TFM, ensemble, AR, and AR+.
+- B1–B4: revision-pinned TabPFN-3 replication for TFM, ensemble, AR, and AR+.
 - B5/B6: one backbone only unless all mandatory cells are already validated.
 
 ### Fairness tracks
@@ -409,7 +409,7 @@ Kill rule: if CrossFM improves validation log loss on no dataset, stop model-fam
 - Alias, anonymization, shuffled/partial metadata.
 - Zero/shuffle/uniform/hard/no-anchor/random residual.
 - Qwen scale and TFM replacement on D1/D2.
-- Complete B1–B4 reduced grid and one TabPFN-3.5/v2.5 backbone replication.
+- Complete B1–B4 reduced grid and one verified TabPFN-3 backbone replication.
 - Complete S1–S5.
 - Start paired bootstraps.
 
