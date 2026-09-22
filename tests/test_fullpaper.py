@@ -121,6 +121,25 @@ def test_grouped_router_and_evaluation_subsets_never_split_groups():
         assert set(indices[groups == group]).issubset(set(capped))
 
 
+def test_engine_caps_router_rows_without_changing_fit_context(tmp_path: Path):
+    from crossfm.fullpaper.data import DatasetBundle
+    from crossfm.fullpaper.engine import FullPaperEngine
+
+    rows = 200
+    bundle = DatasetBundle(
+        "fixture", pd.DataFrame({"x": range(rows)}), pd.Series([0, 1] * (rows // 2)),
+        {"train": np.arange(rows), "validation": np.arange(4), "test": np.arange(4)},
+        {"x": "x"}, "Predict.", "checksum", "split",
+    )
+    engine = FullPaperEngine(
+        {"runtime": {"max_router_rows": 24}}, tmp_path, tmp_path, "cpu",
+    )
+    fit, router = engine._fit_router_indices(bundle, np.arange(rows), 11)
+    assert len(fit) == 160
+    assert len(router) == 24
+    assert set(fit).isdisjoint(router)
+
+
 def test_analytical_router_has_exact_uniform_posterior_bypass():
     bank = np.asarray([[0.1, 0.9, 0.7], [0.8, 0.3, 0.6]])
     fallback = np.asarray([0.314159, 0.271828])

@@ -45,6 +45,9 @@ Every task record includes wall time, declared backbone-call count, logical roun
 count, and peak allocated accelerator memory. `summary.json` reports cumulative
 task time, allocated accelerator-hours, and profile peak memory. Cache tasks are
 included, so compute accounting does not disappear behind response-bank reuse.
+Router calibration is capped at 2,048 label-isolated rows per seed/context cell;
+this bounds LLM cache construction on million-row datasets without changing the
+TFM's declared 10k/full fit context or the fixed validation/test evaluation sets.
 
 Use one operating-system/GPU session for one H100. The supported parallelism is
 one heavyweight worker during `response_bank` and `llm_cache`; launching two 7B

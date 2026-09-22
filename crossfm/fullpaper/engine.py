@@ -210,6 +210,19 @@ class FullPaperEngine:
             )
         return train_indices, validation_indices, test_indices
 
+    def _fit_router_indices(
+        self, bundle: DatasetBundle, train_indices: np.ndarray, seed: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        labels = bundle.target.to_numpy()
+        groups = None if bundle.groups is None else bundle.groups.to_numpy()
+        fit, router = _router_split(train_indices, labels, seed, groups)
+        cap = int(self.config["runtime"].get("max_router_rows", len(router)))
+        if groups is None:
+            router = _stratified_cap(router, labels, cap, seed + 1991)
+        else:
+            router = _group_cap(router, labels, groups, cap, seed + 1991)
+        return fit, router
+
     def _static_llm_train_indices(self, bundle: DatasetBundle, task: ExperimentTask) -> np.ndarray:
         """Cover every router split that consumes the shared seed-neutral LLM cache."""
         profile = self.config["profiles"][task.profile]
@@ -220,20 +233,14 @@ class FullPaperEngine:
         for budget in budgets:
             for seed in seeds:
                 train = _stratified_budget(bundle.splits["train"], labels, budget, int(seed))
-                _, router = _router_split(
-                    train, labels, int(seed),
-                    None if bundle.groups is None else bundle.groups.to_numpy(),
-                )
+                _, router = self._fit_router_indices(bundle, train, int(seed))
                 router_indices.append(router)
         return np.unique(np.concatenate(router_indices))
 
     def run_response_bank(self, task: ExperimentTask, method: dict[str, Any]) -> dict[str, Any]:
         bundle = self.dataset(task.dataset)
         train_idx, validation_idx, test_idx = self._slice(bundle, task)
-        fit_idx, router_idx = _router_split(
-            train_idx, bundle.target.to_numpy(), task.seed,
-            None if bundle.groups is None else bundle.groups.to_numpy(),
-        )
+        fit_idx, router_idx = self._fit_router_indices(bundle, train_idx, task.seed)
         views = candidate_views(bundle.frame, self.config["datasets"][task.dataset])
         router_bank, validation_bank, test_bank, metadata = [], [], [], {}
         backend = method["backend"]
@@ -271,10 +278,7 @@ class FullPaperEngine:
     def run_llm_cache(self, task: ExperimentTask, method: dict[str, Any]) -> dict[str, Any]:
         bundle = self.dataset(task.dataset)
         train_idx, validation_idx, test_idx = self._slice(bundle, task)
-        fit_idx, router_idx = _router_split(
-            train_idx, bundle.target.to_numpy(), task.seed,
-            None if bundle.groups is None else bundle.groups.to_numpy(),
-        )
+        fit_idx, router_idx = self._fit_router_indices(bundle, train_idx, task.seed)
         static_llm = task.method == "cache_llm"
         llm_train_indices = self._static_llm_train_indices(bundle, task) if static_llm else router_idx
         dataset_spec = self.config["datasets"][task.dataset]
