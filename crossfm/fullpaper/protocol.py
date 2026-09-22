@@ -78,6 +78,9 @@ def validate_protocol(config: dict[str, Any]) -> None:
             raise ValueError(f"Invalid accelerator for profile {profile}")
         if spec.get("owner_role") not in {"author_a", "author_b", "any_author"}:
             raise ValueError(f"Invalid owner role for profile {profile}")
+        frozen_from = spec.get("selection_frozen_from")
+        if frozen_from and frozen_from not in config["profiles"]:
+            raise ValueError(f"Profile {profile} freezes selection from unknown profile {frozen_from}")
     routing = config.get("routing", {})
     if routing.get("residual_bypass") != "exact":
         raise ValueError("The preservation bypass must be exact")

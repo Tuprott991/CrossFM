@@ -19,7 +19,8 @@ from .models import (
 )
 from .protocol import ExperimentTask
 from .routing import (
-    ARPlusRouter, analytical_route, factorized_view_posterior, routing_features,
+    ARPlusRouter, analytical_route, corrective_route, factorized_view_posterior,
+    routing_features,
 )
 
 
@@ -66,7 +67,21 @@ def _stratified_cap(indices: np.ndarray, labels: np.ndarray, cap: int, seed: int
     return np.sort(selected)
 
 
-def _router_split(indices: np.ndarray, labels: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray]:
+def _router_split(
+    indices: np.ndarray,
+    labels: np.ndarray,
+    seed: int,
+    groups: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if groups is not None:
+        from sklearn.model_selection import GroupShuffleSplit
+
+        splitter = GroupShuffleSplit(n_splits=20, test_size=0.2, random_state=seed + 991)
+        for fit_pos, router_pos in splitter.split(indices, labels[indices], groups[indices]):
+            fit, router = np.asarray(indices)[fit_pos], np.asarray(indices)[router_pos]
+            if len(np.unique(labels[fit])) >= 2 and len(np.unique(labels[router])) >= 2:
+                return np.sort(fit), np.sort(router)
+        raise ValueError("Group-isolated router split must contain both classes")
     from sklearn.model_selection import train_test_split
 
     fit, router = train_test_split(
@@ -74,6 +89,35 @@ def _router_split(indices: np.ndarray, labels: np.ndarray, seed: int) -> tuple[n
         stratify=np.asarray(labels)[indices],
     )
     return np.sort(fit), np.sort(router)
+
+
+def _group_cap(
+    indices: np.ndarray,
+    labels: np.ndarray,
+    groups: np.ndarray,
+    cap: int,
+    seed: int,
+) -> np.ndarray:
+    """Deterministically cap evaluation rows without splitting customer groups."""
+    indices = np.asarray(indices)
+    if cap >= len(indices):
+        return indices
+    rng = np.random.default_rng(seed)
+    group_values = np.asarray(groups)[indices]
+    unique = np.unique(group_values)
+    rng.shuffle(unique)
+    selected: list[int] = []
+    for group in unique:
+        members = indices[group_values == group]
+        if selected and len(selected) + len(members) > cap:
+            continue
+        selected.extend(map(int, members))
+        if len(selected) >= cap:
+            break
+    result = np.sort(np.asarray(selected, dtype=int))
+    if not len(result) or len(np.unique(labels[result])) < 2:
+        raise ValueError("Group-preserving evaluation cap did not retain both classes")
+    return result
 
 
 def _binary_loss_per_view(labels: np.ndarray, bank: np.ndarray) -> np.ndarray:
@@ -145,16 +189,25 @@ class FullPaperEngine:
             bundle.splits["train"], labels, task.context_budget, task.seed,
         )
         sampling_seed = int(self.config["runtime"].get("evaluation_sampling_seed", 260922))
-        validation_indices = _stratified_cap(
-            bundle.splits["validation"], labels,
-            int(self.config["runtime"].get("max_validation_rows", len(bundle.splits["validation"]))),
-            sampling_seed,
-        )
-        test_indices = _stratified_cap(
-            bundle.splits["test"], labels,
-            int(self.config["runtime"].get("max_test_rows", len(bundle.splits["test"]))),
-            sampling_seed + 1,
-        )
+        validation_cap = int(self.config["runtime"].get(
+            "max_validation_rows", len(bundle.splits["validation"]),
+        ))
+        test_cap = int(self.config["runtime"].get("max_test_rows", len(bundle.splits["test"])))
+        if bundle.groups is not None:
+            group_values = bundle.groups.to_numpy()
+            validation_indices = _group_cap(
+                bundle.splits["validation"], labels, group_values, validation_cap, sampling_seed,
+            )
+            test_indices = _group_cap(
+                bundle.splits["test"], labels, group_values, test_cap, sampling_seed + 1,
+            )
+        else:
+            validation_indices = _stratified_cap(
+                bundle.splits["validation"], labels, validation_cap, sampling_seed,
+            )
+            test_indices = _stratified_cap(
+                bundle.splits["test"], labels, test_cap, sampling_seed + 1,
+            )
         return train_indices, validation_indices, test_indices
 
     def _static_llm_train_indices(self, bundle: DatasetBundle, task: ExperimentTask) -> np.ndarray:
@@ -167,14 +220,20 @@ class FullPaperEngine:
         for budget in budgets:
             for seed in seeds:
                 train = _stratified_budget(bundle.splits["train"], labels, budget, int(seed))
-                _, router = _router_split(train, labels, int(seed))
+                _, router = _router_split(
+                    train, labels, int(seed),
+                    None if bundle.groups is None else bundle.groups.to_numpy(),
+                )
                 router_indices.append(router)
         return np.unique(np.concatenate(router_indices))
 
     def run_response_bank(self, task: ExperimentTask, method: dict[str, Any]) -> dict[str, Any]:
         bundle = self.dataset(task.dataset)
         train_idx, validation_idx, test_idx = self._slice(bundle, task)
-        fit_idx, router_idx = _router_split(train_idx, bundle.target.to_numpy(), task.seed)
+        fit_idx, router_idx = _router_split(
+            train_idx, bundle.target.to_numpy(), task.seed,
+            None if bundle.groups is None else bundle.groups.to_numpy(),
+        )
         views = candidate_views(bundle.frame, self.config["datasets"][task.dataset])
         router_bank, validation_bank, test_bank, metadata = [], [], [], {}
         backend = method["backend"]
@@ -212,7 +271,10 @@ class FullPaperEngine:
     def run_llm_cache(self, task: ExperimentTask, method: dict[str, Any]) -> dict[str, Any]:
         bundle = self.dataset(task.dataset)
         train_idx, validation_idx, test_idx = self._slice(bundle, task)
-        fit_idx, router_idx = _router_split(train_idx, bundle.target.to_numpy(), task.seed)
+        fit_idx, router_idx = _router_split(
+            train_idx, bundle.target.to_numpy(), task.seed,
+            None if bundle.groups is None else bundle.groups.to_numpy(),
+        )
         static_llm = task.method == "cache_llm"
         llm_train_indices = self._static_llm_train_indices(bundle, task) if static_llm else router_idx
         dataset_spec = self.config["datasets"][task.dataset]
@@ -225,9 +287,29 @@ class FullPaperEngine:
             if accelerator == "kaggle_t4x2" else int(method.get("likelihood_batch_size", 4))
         )
         views = candidate_views(bundle.frame, dataset_spec)
-        descriptions = schema_condition(bundle.feature_descriptions, task.schema_condition, seed=task.seed)
+        schema_seed = int(self.config["runtime"].get("schema_perturbation_seed", 260923))
+        descriptions = schema_condition(
+            bundle.feature_descriptions, task.schema_condition, seed=schema_seed,
+        )
+        if task.schema_condition == "aliases":
+            if not bundle.feature_aliases:
+                raise ValueError(f"Dataset {task.dataset} lacks manually validated feature aliases")
+            display_names = dict(bundle.feature_aliases)
+            descriptions = {
+                column: alias.replace("_", " ") for column, alias in display_names.items()
+            }
+        else:
+            display_names = {
+                column: (f"x_{index + 1}" if task.schema_condition == "anonymized" else column)
+                for index, column in enumerate(bundle.frame.columns)
+            }
+        view_display_names = {
+            name: (f"view_{index + 1}" if task.schema_condition == "anonymized" else name)
+            for index, name in enumerate(views)
+        }
         view_texts = [
-            f"View {name}: " + "; ".join(descriptions.get(column, column) for column in columns)
+            f"View {view_display_names[name]}: "
+            + "; ".join(descriptions.get(column, display_names[column]) for column in columns)
             for name, columns in views.items()
         ]
         texts = [bundle.task_description] + view_texts
@@ -236,18 +318,21 @@ class FullPaperEngine:
             context_frame=None if static_llm else bundle.frame.iloc[fit_idx],
             context_labels=None if static_llm else bundle.target.iloc[fit_idx].to_numpy(),
             max_context_rows=0 if static_llm else int(method.get("max_context_rows", 4)),
+            display_names=display_names,
         )
         validation_prompts = row_prompts(
             bundle.frame.iloc[validation_idx], bundle.task_description, descriptions,
             context_frame=None if static_llm else bundle.frame.iloc[train_idx],
             context_labels=None if static_llm else bundle.target.iloc[train_idx].to_numpy(),
             max_context_rows=0 if static_llm else int(method.get("max_context_rows", 4)),
+            display_names=display_names,
         )
         test_prompts = row_prompts(
             bundle.frame.iloc[test_idx], bundle.task_description, descriptions,
             context_frame=None if static_llm else bundle.frame.iloc[train_idx],
             context_labels=None if static_llm else bundle.target.iloc[train_idx].to_numpy(),
             max_context_rows=0 if static_llm else int(method.get("max_context_rows", 4)),
+            display_names=display_names,
         )
         if method.get("tool_response_cache"):
             response = self._load_cache(task, method["tool_response_cache"])
@@ -396,7 +481,7 @@ class FullPaperEngine:
                     router_bank, router_labels, test_bank,
                     float(method.get("posterior_temperature", 0.25)),
                 )
-                if kind == "semantic_oneway":
+                if kind in {"semantic_oneway", "semantic_oneway_compute_matched"}:
                     posterior_validation = np.full_like(
                         posterior_validation, 1 / posterior_validation.shape[1],
                     )
@@ -408,7 +493,6 @@ class FullPaperEngine:
                         posterior_validation, 1 / posterior_validation.shape[1],
                     )
                     posterior_test = np.full_like(posterior_test, 1 / posterior_test.shape[1])
-                    semantic = np.zeros_like(semantic)
                 elif kind == "hard_ablation":
                     hard_validation = np.argmax(posterior_validation, axis=1)
                     posterior_validation = np.eye(posterior_validation.shape[1])[hard_validation]
@@ -420,12 +504,16 @@ class FullPaperEngine:
                     posterior_test = posterior_test[np.random.default_rng(task.seed).permutation(len(posterior_test))]
                 elif kind == "random_bridge":
                     semantic = np.random.default_rng(task.seed).normal(size=semantic.shape)
-                if kind == "semantic_oneway":
-                    weights = np.exp(semantic - np.max(semantic))
-                    weights /= weights.sum()
-                    validation_probability = validation_bank @ weights
-                    probability = test_bank @ weights
+                if kind in {"semantic_oneway", "semantic_oneway_compute_matched"}:
+                    repetitions = int(method.get("logical_rounds", 1))
+                    weights = None
+                    for _ in range(repetitions):
+                        weights = np.exp(semantic - np.max(semantic))
+                        weights /= weights.sum()
+                        validation_probability = validation_bank @ weights
+                        probability = test_bank @ weights
                     details["semantic_weights"] = weights.tolist()
+                    details["logical_rounds"] = repetitions
                 elif kind == "round1":
                     probability = fallback_test.copy()
                     validation_probability = fallback_validation.copy()
@@ -516,6 +604,27 @@ class FullPaperEngine:
                         validation_probability = model.predict_proba(x_validation)[:, 1]
                         probability = model.predict_proba(x_test)[:, 1]
                         details["trainable_params"] = int(model.coef_.size + model.intercept_.size)
+                    elif kind == "round3":
+                        validation_round3 = corrective_route(
+                            router_route, router_bank, router_labels,
+                            validation_route, validation_bank, fallback_validation,
+                            temperature=float(method.get("route_temperature", 1.0)),
+                            strength=float(method.get("correction_strength", 1.0)),
+                        )
+                        test_round3 = corrective_route(
+                            router_route, router_bank, router_labels,
+                            route, test_bank, fallback_test,
+                            temperature=float(method.get("route_temperature", 1.0)),
+                            strength=float(method.get("correction_strength", 1.0)),
+                        )
+                        validation_probability = validation_round3.probability
+                        probability = test_round3.probability
+                        details.update({
+                            "mean_gate": float(np.mean(test_round3.gate)),
+                            "preserved_fraction": float(np.mean(test_round3.gate == 0)),
+                            "rounds": 3,
+                            "third_beat": "confidence_scaled_router_residual_replay",
+                        })
                     else:
                         probability = route.probability
                         validation_probability = validation_route.probability
@@ -576,11 +685,23 @@ def execute_task(engine: FullPaperEngine, task: ExperimentTask, wheel_sha256: st
     ):
         return "reused"
     try:
+        started = time.perf_counter()
+        peak_memory_bytes = None
+        if engine.device.startswith("cuda"):
+            import torch
+            torch.cuda.reset_peak_memory_stats()
         payload, arrays_path = engine.run(task)
+        payload.setdefault("runtime_seconds", time.perf_counter() - started)
+        if engine.device.startswith("cuda"):
+            peak_memory_bytes = int(torch.cuda.max_memory_allocated())
+        method_spec = engine.config["methods"][task.method]
         payload.update({
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "task": asdict(task), "wheel_sha256": wheel_sha256,
             "runtime_device": engine.device,
+            "peak_accelerator_memory_bytes": peak_memory_bytes,
+            "declared_inference_calls": int(method_spec.get("inference_calls", 0)),
+            "logical_rounds": int(method_spec.get("logical_rounds", 1)),
             "git_commit": engine.config["source"]["git_commit"],
             "source_dirty": engine.config["source"]["dirty"],
         })

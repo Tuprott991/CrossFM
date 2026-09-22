@@ -1,0 +1,15 @@
+{
+  "schema_version": "crossfm-cohort-manifest-v1",
+  "dataset_id": "d1_kkbox",
+  "table_sha256": "REPLACE_WITH_SHA256_OF_customer_cutoffs.parquet",
+  "horizon_days": 30,
+  "raw_file_sha256": {
+    "train.csv": "REPLACE_WITH_RAW_FILE_SHA256",
+    "transactions.csv": "REPLACE_WITH_RAW_FILE_SHA256"
+  },
+  "label_reproduction_audit": "passed",
+  "feature_asof_audit": "passed",
+  "feature_aliases": {
+    "REPLACE_WITH_EACH_FEATURE_COLUMN": "REPLACE_WITH_MANUALLY_VALIDATED_UNSEEN_ALIAS"
+  }
+}

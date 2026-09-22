@@ -15,11 +15,18 @@ from crossfm.fullpaper.artifacts import (
     atomic_json, digest_json, reusable_record, write_task_record,
 )
 from crossfm.fullpaper.aggregate import _select_arplus
-from crossfm.fullpaper.data import build_event_cohorts, load_retailrocket
-from crossfm.fullpaper.models import _FROZEN_MODEL_CACHE, _sklearn_matrix, fit_predict_tabular
+from crossfm.fullpaper.engine import _group_cap, _router_split
+from crossfm.fullpaper.data import (
+    build_event_cohorts, load_beyondarena, load_manifest_table, load_retailrocket,
+)
+from crossfm.fullpaper.models import (
+    _FROZEN_MODEL_CACHE, _evict_frozen_models, _sklearn_matrix, candidate_views,
+    fit_predict_tabular, row_prompts,
+)
 from crossfm.fullpaper.protocol import balanced_shards, load_protocol, tasks_for_profile
 from crossfm.fullpaper.routing import (
-    ARPlusRouter, analytical_route, factorized_view_posterior, routing_features,
+    ARPlusRouter, analytical_route, corrective_route, factorized_view_posterior,
+    routing_features,
 )
 from crossfm.fullpaper.splits import assert_asof_integrity, temporal_split
 from crossfm.fullpaper.synthetic_stress import StressCell, simulate_cell
@@ -37,7 +44,15 @@ FLEET_SPEC.loader.exec_module(FLEET)
 
 def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
+    assert config["experiment"]["protocol_id"] == "crossfm-align-fullpaper-exploratory-v7"
     assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
+    assert "llm_to_tfm_compute_matched" not in config["methods"]
+    assert "tfm_to_llm" not in config["methods"]
+    assert "aliases" in config["profiles"]["author_a_h100_robustness"]["schema_conditions"]
+    assert config["profiles"]["author_a_h100_primary"]["performs_global_model_selection"]
+    assert config["profiles"]["author_a_h100_scale"]["selection_frozen_from"] == (
+        "author_a_h100_primary"
+    )
     for profile in config["profiles"]:
         tasks = tasks_for_profile(config, profile)
         assert tasks
@@ -60,6 +75,17 @@ def test_cost_balanced_sharding_is_deterministic_and_complete():
     assert set(task.task_id for task in left[0]).isdisjoint(task.task_id for task in left[1])
 
 
+def test_grouped_router_and_evaluation_subsets_never_split_groups():
+    indices = np.arange(40)
+    groups = np.repeat(np.arange(10), 4)
+    labels = np.tile([0, 1, 0, 1], 10)
+    fit, router = _router_split(indices, labels, 7, groups)
+    assert set(groups[fit]).isdisjoint(groups[router])
+    capped = _group_cap(indices, labels, groups, 17, 9)
+    for group in np.unique(groups[capped]):
+        assert set(indices[groups == group]).issubset(set(capped))
+
+
 def test_analytical_router_has_exact_uniform_posterior_bypass():
     bank = np.asarray([[0.1, 0.9, 0.7], [0.8, 0.3, 0.6]])
     fallback = np.asarray([0.314159, 0.271828])
@@ -76,6 +102,26 @@ def test_factorized_posterior_is_soft_and_normalized():
     assert np.allclose(posterior.sum(1), 1.0)
     assert np.all((posterior > 0) & (posterior < 1))
     assert np.allclose(posterior[1], np.full(3, 1 / 3))
+
+
+def test_corrective_third_beat_changes_attention_without_breaking_bypass():
+    router_bank = np.asarray([[0.9, 0.2], [0.8, 0.7], [0.1, 0.8], [0.2, 0.6]])
+    labels = np.asarray([1, 1, 0, 0])
+    posterior = np.asarray([[0.8, 0.2]] * 4)
+    fallback = np.asarray([0.5] * 4)
+    round2_router = analytical_route(router_bank, np.zeros(2), posterior, fallback)
+    target_bank = np.asarray([[0.9, 0.1], [0.2, 0.8]])
+    target_posterior = np.asarray([[0.8, 0.2], [0.5, 0.5]])
+    target_fallback = np.asarray([0.4, 0.314159])
+    round2_target = analytical_route(
+        target_bank, np.zeros(2), target_posterior, target_fallback,
+    )
+    round3 = corrective_route(
+        round2_router, router_bank, labels, round2_target, target_bank, target_fallback,
+    )
+    assert not np.allclose(round3.weights[0], round2_target.weights[0])
+    assert round3.gate[1] == 0
+    assert round3.probability[1] == target_fallback[1]
 
 
 def test_arplus_zero_initialization_and_bypass_are_exact():
@@ -197,6 +243,95 @@ def test_tabpfn3_uses_revision_pinned_verified_huggingface_checkpoint(
     }]
     assert constructors[0]["model_path"] == str(checkpoint)
     assert np.array_equal(result.test_probability, np.full(3, 0.7))
+
+
+def test_heavy_model_cache_evicts_stale_seed_instances():
+    _FROZEN_MODEL_CACHE.clear()
+    keep = ("tabicl", "cuda:0", 2)
+    _FROZEN_MODEL_CACHE[("tabicl", "cuda:0", 1)] = object()
+    _FROZEN_MODEL_CACHE[keep] = object()
+    _FROZEN_MODEL_CACHE[("causal_llm", "model")] = object()
+    _evict_frozen_models("tabicl", keep)
+    assert keep in _FROZEN_MODEL_CACHE
+    assert ("tabicl", "cuda:0", 1) not in _FROZEN_MODEL_CACHE
+    assert ("causal_llm", "model") in _FROZEN_MODEL_CACHE
+
+
+def test_anonymized_prompts_do_not_leak_original_column_names():
+    prompts = row_prompts(
+        pd.DataFrame({"monthly_premium": [123], "income": [456]}),
+        "Predict lapse.",
+        {"monthly_premium": "x_1", "income": "x_2"},
+        display_names={"monthly_premium": "x_1", "income": "x_2"},
+    )
+    assert "monthly_premium" not in prompts[0]
+    assert "income" not in prompts[0]
+    assert "x_1=123" in prompts[0] and "x_2=456" in prompts[0]
+
+
+def test_all_numeric_table_does_not_duplicate_numeric_and_full_views():
+    views = candidate_views(pd.DataFrame({"a": [1], "b": [2]}), {"views": {}})
+    assert views == {"schema_group_a": ["a"], "full_table": ["a", "b"]}
+
+
+def test_kkbox_manifest_loader_requires_audited_hash_and_customer_groups(tmp_path: Path):
+    table = tmp_path / "cohort.csv"
+    frame = pd.DataFrame({
+        "customer_id": [f"c{i}" for i in range(6)],
+        "split": ["train", "train", "validation", "validation", "test", "test"],
+        "feature": range(6), "target": [0, 1, 0, 1, 0, 1],
+    })
+    frame.to_csv(table, index=False)
+    manifest = {
+        "schema_version": "crossfm-cohort-manifest-v1", "dataset_id": "d1_kkbox",
+        "table_sha256": hashlib.sha256(table.read_bytes()).hexdigest(), "horizon_days": 30,
+        "raw_file_sha256": {"raw.csv": "a" * 64},
+        "label_reproduction_audit": "passed", "feature_asof_audit": "passed",
+        "feature_aliases": {"feature": "account_signal"},
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    bundle = load_manifest_table("d1_kkbox", {
+        "files": {"table": "cohort.csv", "manifest": "manifest.json"},
+        "audit_manifest_required": True, "target_column": "target",
+        "group_column": "customer_id", "split_column": "split", "split": "temporal",
+        "task_description": "Predict lapse.",
+    }, tmp_path)
+    assert bundle.groups.tolist() == [f"c{i}" for i in range(6)]
+    assert list(bundle.frame) == ["feature"]
+    assert bundle.feature_aliases == {"feature": "account_signal"}
+
+
+def test_beyondarena_grouped_validation_preserves_whole_groups(monkeypatch):
+    dataset = pd.DataFrame({
+        "customer": ["a"] * 4 + ["b"] * 4 + ["c"] * 4,
+        "feature": range(12), "target": [0, 1] * 6,
+    })
+    container = types.SimpleNamespace(
+        dataset=dataset,
+        task_metadata=types.SimpleNamespace(
+            target_column_name="target", group_on="customer", time_on=None,
+        ),
+        experiment_metadata=types.SimpleNamespace(
+            splits={0: {0: (np.arange(8), np.arange(8, 12))}},
+        ),
+        dataset_metadata=types.SimpleNamespace(unique_name="fixture"),
+    )
+    collection = types.SimpleNamespace(get_dataset=lambda _: container)
+    package = types.ModuleType("data_foundry")
+    collections = types.ModuleType("data_foundry.collections")
+    collections.BEYOND_ARENA = collection
+    monkeypatch.setitem(sys.modules, "data_foundry", package)
+    monkeypatch.setitem(sys.modules, "data_foundry.collections", collections)
+    bundle = load_beyondarena("grouped", {
+        "unique_name": "fixture", "split": "grouped", "repeat": 0, "fold": 0,
+        "task_description": "Predict.",
+    }, Path("."))
+    train_groups = set(bundle.groups.iloc[bundle.splits["train"]])
+    validation_groups = set(bundle.groups.iloc[bundle.splits["validation"]])
+    test_groups = set(bundle.groups.iloc[bundle.splits["test"]])
+    assert train_groups.isdisjoint(validation_groups | test_groups)
+    assert validation_groups.isdisjoint(test_groups)
+    assert "customer" not in bundle.frame
 
 
 def test_retailrocket_short_timeline_supports_embargoed_three_way_split(tmp_path: Path):

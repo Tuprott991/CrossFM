@@ -44,6 +44,12 @@ def aggregate_run(
         records.append(json.loads(path.read_text(encoding="utf-8")))
     if missing:
         raise RuntimeError(f"Cannot aggregate incomplete grid; missing/invalid={missing[:20]}")
+    expected = {task.task_id for task in tasks}
+    record_dir = output / "records"
+    actual = {path.stem for path in record_dir.glob("*.json")} if record_dir.exists() else set()
+    unexpected = actual - expected
+    if unexpected:
+        raise RuntimeError(f"Cannot aggregate grid with unexpected records: {sorted(unexpected)[:20]}")
     rows = []
     for record in records:
         task = record["payload"]["task"]
@@ -59,6 +65,14 @@ def aggregate_run(
                 **metrics,
                 **{f"validation_{key}": value for key, value in validation_metrics.items()},
                 "runtime_seconds": record["payload"].get("runtime_seconds"),
+                "peak_accelerator_memory_bytes": record["payload"].get(
+                    "peak_accelerator_memory_bytes"
+                ),
+                "inference_calls": record["payload"].get("declared_inference_calls"),
+                "logical_rounds": record["payload"].get("logical_rounds"),
+                "trainable_communication_params": record["payload"].get("details", {}).get(
+                    "trainable_params", 0 if task["method"].startswith("crossfm_ar") else None,
+                ),
                 "dataset_checksum": record["payload"].get("dataset_checksum"),
                 "split_hash": record["payload"].get("split_hash"),
                 "prediction_sha256": record["payload"].get("prediction_sha256"),
@@ -68,7 +82,24 @@ def aggregate_run(
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
             writer.writeheader(); writer.writerows(rows)
-    selection = _select_arplus(rows, config)
+    profile_spec = config["profiles"][profile]
+    if profile_spec.get("selection_frozen_from"):
+        selection = {
+            "status": "evaluation_only",
+            "primary": None,
+            "frozen_from_profile": profile_spec["selection_frozen_from"],
+            "note": "Do not re-select AR versus AR+ on this evaluation profile",
+        }
+    else:
+        selection = _select_arplus(rows, config)
+    total_runtime_seconds = float(sum(
+        float(record["payload"].get("runtime_seconds", 0.0)) for record in records
+    ))
+    accelerator_runtime_seconds = float(sum(
+        float(record["payload"].get("runtime_seconds", 0.0))
+        for record in records
+        if str(record["payload"].get("runtime_device", "")).startswith("cuda")
+    ))
     summary = {
         "status": "complete",
         "protocol_id": config["experiment"]["protocol_id"],
@@ -77,6 +108,12 @@ def aggregate_run(
         "config_digest": tasks[0].config_digest if tasks else None,
         "expected_tasks": len(tasks), "validated_tasks": len(records),
         "evaluation_rows": len(rows), "selection": selection,
+        "cumulative_task_runtime_seconds": total_runtime_seconds,
+        "allocated_accelerator_hours": accelerator_runtime_seconds / 3600.0,
+        "peak_accelerator_memory_bytes": max(
+            (int(record["payload"].get("peak_accelerator_memory_bytes") or 0) for record in records),
+            default=0,
+        ),
         "results_csv": str(csv_path) if rows else None,
     }
     atomic_json(output / "summary.json", summary)

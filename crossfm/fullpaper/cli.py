@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 from pathlib import Path
 import platform
 import shutil
+import subprocess
 import sys
 import traceback
 
@@ -15,6 +17,28 @@ from .artifacts import atomic_json
 from .engine import FullPaperEngine, execute_task
 from .models import configure_h100_math
 from .protocol import balanced_shards, load_protocol, tasks_for_profile
+
+
+def _materialize_source(config: dict) -> dict:
+    """Replace BUILD_TIME sentinels with the exact clean source revision."""
+    if config["source"].get("git_commit") != "BUILD_TIME":
+        return config
+    root = Path(__file__).resolve().parents[2]
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    dirty = bool(subprocess.run(
+        ["git", "status", "--porcelain"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip())
+    if dirty:
+        raise RuntimeError(
+            "Refusing an H100 research run from a dirty worktree; commit the frozen protocol first"
+        )
+    resolved = dict(config)
+    resolved["source"] = {**config["source"], "git_commit": commit, "dirty": False}
+    return resolved
 
 
 def _device(accelerator: str) -> str:
@@ -37,6 +61,25 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
         "disk_free_bytes": shutil.disk_usage(output.parent if output.parent.exists() else Path.cwd()).free,
         "data_root": str(data_root.resolve()), "data_root_exists": data_root.exists(),
     }
+    minimum_disk = int(config["runtime"].get("minimum_free_disk_gib", 0)) * 1024**3
+    if report["disk_free_bytes"] < minimum_disk:
+        raise RuntimeError(
+            f"Insufficient output disk: {report['disk_free_bytes']} bytes free; "
+            f"need at least {minimum_disk}"
+        )
+    installed = {}
+    mismatched = {}
+    for package, expected in config["runtime"].get("expected_package_versions", {}).items():
+        try:
+            observed = version(package)
+        except PackageNotFoundError:
+            observed = None
+        installed[package] = observed
+        if observed is None or observed.split("+", 1)[0] != str(expected):
+            mismatched[package] = {"expected": str(expected), "observed": observed}
+    report["package_versions"] = installed
+    if mismatched:
+        raise RuntimeError(f"Pinned package preflight failed: {mismatched}")
     missing_files = []
     for dataset_id in spec.get("datasets", []):
         dataset_spec = config["datasets"][dataset_id]
@@ -59,6 +102,7 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
                 "name": torch.cuda.get_device_properties(index).name,
                 "memory_bytes": torch.cuda.get_device_properties(index).total_memory,
             } for index in range(torch.cuda.device_count())],
+            "bf16_supported": bool(torch.cuda.is_bf16_supported()),
         })
         x = torch.ones((16, 16), device="cuda", dtype=(
             torch.bfloat16 if spec["accelerator"] == "h100_80gb" else torch.float16
@@ -74,6 +118,8 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
             or report["gpus"][0]["memory_bytes"] < 75 * 1024**3
         ):
             raise RuntimeError(f"Expected one visible H100 80GB, found {report['gpus']}")
+        if spec["accelerator"] == "h100_80gb" and not report["bf16_supported"]:
+            raise RuntimeError("Visible H100 does not report BF16 support")
     atomic_json(output / "doctor.json", report)
     return report
 
@@ -90,7 +136,7 @@ def main() -> None:
     parser.add_argument("--stage")
     parser.add_argument("--wheel-sha256", default="local")
     args = parser.parse_args()
-    config = load_protocol(args.config)
+    config = _materialize_source(load_protocol(args.config))
     tasks = tasks_for_profile(config, args.profile)
     if args.stage:
         tasks = [task for task in tasks if task.stage == args.stage]

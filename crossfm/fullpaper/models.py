@@ -16,6 +16,21 @@ _FROZEN_MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
 _TEXT_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
 
 
+def _evict_frozen_models(family: str, keep: tuple[Any, ...]) -> None:
+    """Bound accelerator memory to one cached model per heavyweight family."""
+    stale = [key for key in _FROZEN_MODEL_CACHE if key and key[0] == family and key != keep]
+    for key in stale:
+        del _FROZEN_MODEL_CACHE[key]
+    if stale:
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
+
 @dataclass(slots=True)
 class PredictionResult:
     validation_probability: np.ndarray
@@ -222,6 +237,7 @@ def fit_predict_tabular(
             else: x_test = np.asarray(matrix, dtype=np.float32)
         prediction_chunk_size = int(params.pop("prediction_chunk_size", 256))
         key = ("tabicl", device, seed, tuple(sorted((name, repr(value)) for name, value in params.items())))
+        _evict_frozen_models("tabicl", key)
         model = _FROZEN_MODEL_CACHE.get(key)
         if model is None:
             model = TabICLClassifier(device=device, random_state=seed, **params)
@@ -262,6 +278,7 @@ def fit_predict_tabular(
             "tabpfn3", device, seed, str(repo_id), str(revision), str(filename),
             tuple(sorted((name, repr(value)) for name, value in params.items())),
         )
+        _evict_frozen_models("tabpfn3", key)
         model = _FROZEN_MODEL_CACHE.get(key)
         if model is None:
             model = TabPFNClassifier(
@@ -296,9 +313,9 @@ def candidate_views(frame: pd.DataFrame, dataset_spec: dict[str, Any]) -> dict[s
             views[name] = columns
     numeric = list(frame.select_dtypes(include=[np.number, "bool"]).columns)
     categorical = [column for column in frame if column not in numeric]
-    if numeric and "numeric" not in views:
+    if numeric and len(numeric) < len(frame.columns) and "numeric" not in views:
         views["numeric"] = numeric
-    if categorical and "categorical" not in views:
+    if categorical and len(categorical) < len(frame.columns) and "categorical" not in views:
         views["categorical"] = categorical
     views["full_table"] = list(frame.columns)
     unique = {name: columns for name, columns in views.items() if columns}
@@ -317,7 +334,7 @@ def constrained_label_likelihoods(
     batch_size: int,
     device: str,
     dtype: str,
-    labels: tuple[str, str] = ("LOW", "HIGH"),
+    labels: tuple[str, str] = (" LOW", " HIGH"),
 ) -> np.ndarray:
     """Sequence-level normalized label likelihood; no free-form parsing."""
 
@@ -370,7 +387,7 @@ def cached_llm_outputs(
     likelihood_batch_size: int,
     device: str,
     dtype: str,
-    labels: tuple[str, str] = ("LOW", "HIGH"),
+    labels: tuple[str, str] = (" LOW", " HIGH"),
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute static embeddings and constrained probabilities with one model load.
 
@@ -511,22 +528,31 @@ def row_prompts(
     context_frame: pd.DataFrame | None = None,
     context_labels: np.ndarray | None = None,
     max_context_rows: int = 4,
+    display_names: dict[str, str] | None = None,
 ) -> list[str]:
     columns = list(frame.columns)[:max_columns]
-    schema = "; ".join(f"{column}: {descriptions.get(column, column)}" for column in columns)
+    names = display_names or {column: column for column in columns}
+    schema = "; ".join(
+        f"{names.get(column, column)}: {descriptions.get(column, names.get(column, column))}"
+        for column in columns
+    )
     examples = ""
     if context_frame is not None and context_labels is not None:
         context = context_frame[columns].iloc[:max_context_rows]
         labels = np.asarray(context_labels).reshape(-1)[:len(context)]
         lines = []
         for row, label in zip(context.itertuples(index=False, name=None), labels):
-            values = "; ".join(f"{column}={value}" for column, value in zip(columns, row))
+            values = "; ".join(
+                f"{names.get(column, column)}={value}" for column, value in zip(columns, row)
+            )
             lines.append(f"Example: {values}; label={'HIGH' if int(label) else 'LOW'}")
         examples = "\n" + "\n".join(lines)
     static_prefix = f"Task: {task_description}\nSchema: {schema}{examples}\n"
     prompts = []
     for row in frame[columns].itertuples(index=False, name=None):
-        values = "; ".join(f"{column}={value}" for column, value in zip(columns, row))
+        values = "; ".join(
+            f"{names.get(column, column)}={value}" for column, value in zip(columns, row)
+        )
         prompts.append(
             f"{static_prefix}Row: {values}\n"
             "Return the more likely class label. Answer LOW or HIGH.\nLabel:"

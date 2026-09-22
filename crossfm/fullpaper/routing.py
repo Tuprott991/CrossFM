@@ -27,6 +27,55 @@ class RoutingResult:
     analytical_logits: np.ndarray
 
 
+def corrective_route(
+    round2_router: RoutingResult,
+    router_bank: np.ndarray,
+    router_labels: np.ndarray,
+    round2_target: RoutingResult,
+    target_bank: np.ndarray,
+    fallback_probability: np.ndarray,
+    *,
+    temperature: float = 1.0,
+    strength: float = 1.0,
+) -> RoutingResult:
+    """A label-isolated third beat driven by round-2 residual reliability.
+
+    View corrections are learned only from the router split.  At prediction time
+    they are scaled by round-2 confidence and replayed as soft attention; target
+    labels are never read.  The original preservation gate remains unchanged, so
+    zero statistical evidence still delegates exactly to the LLM fallback.
+    """
+
+    router = np.clip(np.asarray(router_bank, dtype=np.float64), 1e-6, 1 - 1e-6)
+    labels = np.asarray(router_labels, dtype=np.float64).reshape(-1, 1)
+    if router.ndim != 2 or labels.shape[0] != router.shape[0]:
+        raise ValueError("router bank and labels must have matching rows")
+    target = np.asarray(target_bank, dtype=np.float64)
+    if target.shape != round2_target.weights.shape:
+        raise ValueError("target bank must match the round-2 view weights")
+    view_loss = -np.mean(labels * np.log(router) + (1 - labels) * np.log(1 - router), axis=0)
+    base_probability = np.clip(round2_router.probability, 1e-6, 1 - 1e-6)[:, None]
+    base_loss = -np.mean(
+        labels * np.log(base_probability) + (1 - labels) * np.log(1 - base_probability)
+    )
+    advantage = base_loss - view_loss
+    scale = max(float(np.std(advantage)), 1e-8)
+    advantage = (advantage - float(np.mean(advantage))) / scale
+    confidence = np.abs(round2_target.probability - 0.5) * 2.0
+    correction = float(strength) * confidence[:, None] * advantage[None, :]
+    logits = round2_target.analytical_logits + correction
+    weights = _softmax(logits / float(temperature))
+    routed = np.sum(weights * target, axis=1)
+    gate = round2_target.gate.copy()
+    fallback = np.asarray(fallback_probability, dtype=np.float64).reshape(-1)
+    probability = fallback.copy()
+    active = gate > 0
+    probability[active] = (
+        (1.0 - gate[active]) * fallback[active] + gate[active] * routed[active]
+    )
+    return RoutingResult(probability, routed, weights, gate, logits)
+
+
 def analytical_route(
     response_bank: np.ndarray,
     semantic_logits: np.ndarray,

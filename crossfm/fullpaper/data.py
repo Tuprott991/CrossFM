@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ class DatasetBundle:
     groups: pd.Series | None = None
     timestamps: pd.Series | None = None
     official_metric: str = "roc_auc"
+    feature_aliases: dict[str, str] | None = None
 
     def validate(self) -> None:
         if len(self.frame) != len(self.target) or not len(self.frame):
@@ -36,12 +38,40 @@ class DatasetBundle:
             raise ValueError(f"Out-of-range split indices for {self.dataset_id}")
         if set(np.unique(self.target.dropna())) - {0, 1, False, True}:
             raise ValueError(f"Only binary targets are supported: {self.dataset_id}")
+        if self.target.isna().any():
+            raise ValueError(f"Missing targets are forbidden: {self.dataset_id}")
+        for name in ("train", "validation", "test"):
+            if name not in self.splits or not len(self.splits[name]):
+                raise ValueError(f"Missing or empty {name} split for {self.dataset_id}")
+        if self.groups is not None and (
+            len(self.groups) != len(self.frame) or self.groups.isna().any()
+        ):
+            raise ValueError(f"Invalid grouping vector for {self.dataset_id}")
 
 
 def _frame_checksum(frame: pd.DataFrame) -> str:
     digest = hashlib.sha256()
     digest.update(pd.util.hash_pandas_object(frame, index=True).values.tobytes())
     return digest.hexdigest()
+
+
+def _cohort_feature_alias(column: str) -> str:
+    replacements = {
+        "recency_days": "days_since_most_recent_activity",
+        "tenure_observed_days": "observed_customer_history_days",
+        "event_count_": "purchases_in_previous_",
+        "active_days_": "days_with_purchase_in_previous_",
+        "value_sum_": "spend_total_previous_",
+        "value_mean_": "average_order_value_previous_",
+        "unique_items_": "distinct_products_previous_",
+        "event_type_purchase_": "purchase_events_previous_",
+    }
+    for source, alias in replacements.items():
+        if column == source:
+            return alias
+        if column.startswith(source):
+            return alias + column[len(source):]
+    return "customer_measure_" + column.replace("_", "-")
 
 
 def _read_table(path: Path) -> pd.DataFrame:
@@ -168,6 +198,7 @@ def _bundle_from_cohorts(dataset_id: str, cohorts: pd.DataFrame, spec: dict[str,
         groups=cohorts["customer_id"].astype(str),
         timestamps=cohorts["cutoff"],
         official_metric=spec.get("official_metric", "average_precision"),
+        feature_aliases={column: _cohort_feature_alias(column) for column in features},
     )
     bundle.validate()
     return bundle
@@ -238,14 +269,49 @@ def load_retailrocket(dataset_id: str, spec: dict[str, Any], data_root: Path) ->
 
 def load_manifest_table(dataset_id: str, spec: dict[str, Any], data_root: Path) -> DatasetBundle:
     path = data_root / spec["files"]["table"]
+    manifest_name = spec.get("files", {}).get("manifest")
+    if spec.get("audit_manifest_required", False):
+        if not manifest_name:
+            raise ValueError(f"Dataset {dataset_id} requires an audit manifest path")
+        manifest_path = data_root / manifest_name
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        required = {
+            "schema_version", "dataset_id", "table_sha256", "horizon_days",
+            "raw_file_sha256", "label_reproduction_audit", "feature_asof_audit",
+            "feature_aliases",
+        }
+        missing = required - set(manifest)
+        if missing:
+            raise ValueError(f"Cohort audit manifest is missing {sorted(missing)}")
+        if manifest["schema_version"] != "crossfm-cohort-manifest-v1":
+            raise ValueError("Unsupported cohort audit manifest schema")
+        if manifest["dataset_id"] != dataset_id or int(manifest["horizon_days"]) != 30:
+            raise ValueError("Cohort manifest dataset or prediction horizon mismatch")
+        if manifest["table_sha256"] != sha256_file(path):
+            raise ValueError("Cohort table SHA-256 does not match its audit manifest")
+        if not isinstance(manifest["raw_file_sha256"], dict) or not manifest["raw_file_sha256"]:
+            raise ValueError("Cohort manifest must identify hashed raw source files")
+        if manifest["label_reproduction_audit"] != "passed":
+            raise ValueError("Independent label-reproduction audit has not passed")
+        if manifest["feature_asof_audit"] != "passed":
+            raise ValueError("Feature as-of leakage audit has not passed")
     frame = _read_table(path)
     target_column = spec["target_column"]
     if target_column not in frame:
         raise ValueError(f"Target column {target_column!r} is missing")
     target = frame.pop(target_column).astype(int)
+    group_column = spec.get("group_column")
+    groups = frame.pop(group_column) if group_column else None
+    if groups is not None:
+        if groups.isna().any():
+            raise ValueError(f"Grouping column {group_column!r} contains missing values")
+        groups = groups.astype(str)
     split_column = spec.get("split_column")
     if split_column:
         labels = frame.pop(split_column).astype(str).str.lower()
+        unknown = set(labels.unique()) - {"train", "validation", "test"}
+        if unknown:
+            raise ValueError(f"Unknown split labels: {sorted(unknown)}")
         splits = {name: np.flatnonzero(labels == name) for name in ("train", "validation", "test")}
     elif spec["split"] == "temporal":
         timestamp_column = spec["timestamp_column"]
@@ -266,11 +332,16 @@ def load_manifest_table(dataset_id: str, spec: dict[str, Any], data_root: Path) 
         )
         splits = {"train": np.sort(train), "validation": np.sort(validation), "test": np.sort(test)}
     descriptions = spec.get("feature_descriptions", {})
+    aliases = manifest["feature_aliases"] if spec.get("audit_manifest_required", False) else None
+    if aliases is not None:
+        if set(aliases) != set(frame) or len(set(aliases.values())) != len(frame.columns):
+            raise ValueError("Cohort aliases must uniquely cover every feature column")
     bundle = DatasetBundle(
         dataset_id, frame, target, splits,
         {column: descriptions.get(column, column.replace("_", " ")) for column in frame},
         spec["task_description"], sha256_file(path), split_hash(splits),
-        official_metric=spec.get("official_metric", "roc_auc"),
+        groups=groups, official_metric=spec.get("official_metric", "roc_auc"),
+        feature_aliases=aliases,
     )
     bundle.validate()
     return bundle
@@ -285,6 +356,19 @@ def load_beyondarena(dataset_id: str, spec: dict[str, Any], _: Path) -> DatasetB
     frame = container.dataset.copy()
     target_column = container.task_metadata.target_column_name
     target = frame.pop(target_column).astype(int)
+    group_on = getattr(container.task_metadata, "group_on", None)
+    if group_on:
+        group_columns = [group_on] if isinstance(group_on, str) else list(group_on)
+        missing_group_columns = set(group_columns) - set(frame)
+        if missing_group_columns:
+            raise ValueError(
+                f"Grouped dataset {dataset_id} lacks {sorted(missing_group_columns)}"
+            )
+        group_frame = frame[group_columns].astype("string").fillna("__MISSING_GROUP__")
+        groups = group_frame.agg("|".join, axis=1).astype(str)
+        frame = frame.drop(columns=group_columns)
+    else:
+        groups = None
     repeats = container.experiment_metadata.splits
     repeat_id = sorted(repeats)[int(spec.get("repeat", 0))]
     folds = repeats[repeat_id]
@@ -293,11 +377,28 @@ def load_beyondarena(dataset_id: str, spec: dict[str, Any], _: Path) -> DatasetB
     train = np.asarray(train, dtype=int)
     test = np.asarray(test, dtype=int)
     # Validation is carved only from the official training fold, preserving test isolation.
-    if spec["split"] in {"temporal", "grouped"}:
+    if spec["split"] == "grouped":
+        if groups is None:
+            raise ValueError(f"Grouped dataset {dataset_id} does not expose group labels")
+        ordered_groups = pd.unique(groups.iloc[train])
+        if len(ordered_groups) < 2:
+            raise ValueError(f"Grouped dataset {dataset_id} has fewer than two outer-train groups")
+        group_boundary = max(1, min(len(ordered_groups) - 1, int(0.8 * len(ordered_groups))))
+        fit_groups = set(ordered_groups[:group_boundary])
+        train_part = train[groups.iloc[train].isin(fit_groups).to_numpy()]
+        validation_part = train[~groups.iloc[train].isin(fit_groups).to_numpy()]
+        permuted = np.concatenate((np.sort(train_part), np.sort(validation_part)))
+        boundary = len(train_part)
+    elif spec["split"] == "temporal":
         # Official non-IID containers preserve source order in their outer-train indices.
         # A tail split avoids random mixing across time/group blocks. The outer test fold
         # remains untouched.
-        permuted = np.sort(train)
+        time_on = getattr(container.task_metadata, "time_on", None)
+        if time_on and time_on in frame:
+            ordering = pd.to_datetime(frame.iloc[train][time_on], utc=True, errors="raise")
+            permuted = train[np.argsort(ordering.to_numpy(), kind="stable")]
+        else:
+            permuted = np.sort(train)
     else:
         from sklearn.model_selection import train_test_split
 
@@ -306,7 +407,8 @@ def load_beyondarena(dataset_id: str, spec: dict[str, Any], _: Path) -> DatasetB
             stratify=target.iloc[train],
         )
         permuted = np.concatenate((np.sort(train_part), np.sort(validation_part)))
-    boundary = max(1, int(0.8 * len(permuted)))
+    if spec["split"] != "grouped":
+        boundary = max(1, int(0.8 * len(permuted)))
     splits = {
         "train": np.sort(permuted[:boundary]),
         "validation": np.sort(permuted[boundary:]),
@@ -324,7 +426,8 @@ def load_beyondarena(dataset_id: str, spec: dict[str, Any], _: Path) -> DatasetB
         dataset_id, frame, target, splits,
         {column: descriptions.get(column, column.replace("_", " ")) for column in frame},
         spec["task_description"], hashlib.sha256(repr(identity).encode()).hexdigest(),
-        split_hash(splits), official_metric=spec.get("official_metric", "roc_auc"),
+        split_hash(splits), groups=groups,
+        official_metric=spec.get("official_metric", "roc_auc"),
     )
     bundle.validate()
     return bundle

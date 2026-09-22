@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v6
+  protocol_id: crossfm-align-fullpaper-exploratory-v7
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -19,8 +19,18 @@ runtime:
   response_bank_cache: true
   atomic_task_records: true
   evaluation_sampling_seed: 260922
+  schema_perturbation_seed: 260923
   max_validation_rows: 5000
   max_test_rows: 10000
+  minimum_free_disk_gib: 50
+  expected_package_versions:
+    torch: 2.6.0
+    transformers: 4.57.6
+    tabicl: 2.2.0
+    tabpfn: 9.0.0
+    scikit-learn: 1.6.1
+    pandas: 2.2.3
+    numpy: 1.26.4
 
 routing:
   representation: continuous_posterior
@@ -40,9 +50,13 @@ selection:
 datasets:
   d1_kkbox:
     loader: manifest_table
-    files: {table: kkbox/customer_cutoffs.parquet}
+    files:
+      table: kkbox/customer_cutoffs.parquet
+      manifest: kkbox/cohort_manifest.json
+    audit_manifest_required: true
     target_column: target
     split_column: split
+    group_column: customer_id
     split: temporal
     checksum_required: true
     official_metric: average_precision
@@ -252,15 +266,15 @@ methods:
   llm_only: {stages: [evaluate], kind: llm_only, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 1}
   prediction_ensemble: {stages: [evaluate], kind: ensemble, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
   llm_to_tfm: {stages: [evaluate], kind: semantic_oneway, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 1}
-  llm_to_tfm_compute_matched: {stages: [evaluate], kind: semantic_oneway, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 3}
-  tfm_to_llm: {stages: [evaluate], kind: tfm_to_llm, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 1}
+  llm_to_tfm_repeated_routing: {stages: [evaluate], kind: semantic_oneway_compute_matched, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 2, logical_rounds: 3}
+  learned_summary_fusion: {stages: [evaluate], kind: tfm_to_llm, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 1}
   textual_tool: {stages: [evaluate], kind: llm_only, response_cache: cache_tabicl, llm_cache: cache_llm_tool, cost: 0.2, inference_calls: 2}
   crossfm_ar: {stages: [evaluate], kind: ar, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 2}
   crossfm_arplus: {stages: [evaluate], kind: arplus, response_cache: cache_tabicl, llm_cache: cache_llm, epochs: 100, hidden_dim: 32, anchor_kl: 0.02, correction_l2: 0.001, cost: 0.5, inference_calls: 2}
   crossfm_smr: {stages: [evaluate], kind: smr, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.4, inference_calls: 2}
   crossfm_round1: {stages: [evaluate], kind: round1, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 1}
   crossfm_round2: {stages: [evaluate], kind: ar, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.2, inference_calls: 2}
-  crossfm_round3: {stages: [evaluate], kind: round3, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.3, inference_calls: 3}
+  crossfm_round3: {stages: [evaluate], kind: round3, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.3, inference_calls: 2, logical_rounds: 3, correction_strength: 1.0}
   ablate_no_semantic: {stages: [evaluate], kind: no_semantic, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
   ablate_uniform_posterior: {stages: [evaluate], kind: uniform_ablation, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
   ablate_hard_posterior: {stages: [evaluate], kind: hard_ablation, response_cache: cache_tabicl, llm_cache: cache_llm, cost: 0.1, inference_calls: 2}
@@ -276,14 +290,16 @@ profiles:
   author_a_h100_primary:
     owner_role: author_a
     accelerator: h100_80gb
+    performs_global_model_selection: true
     datasets: [d1_kkbox, d2_online_retail]
-    methods: [cache_tabicl, cache_tabpfn3, cache_llm, cache_llm_tool, logistic, catboost, lightgbm, xgboost, tabm, autogluon, tabicl_only, tabpfn3_only, llm_only, prediction_ensemble, llm_to_tfm, llm_to_tfm_compute_matched, tfm_to_llm, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, crossfm_round1, crossfm_round2, crossfm_round3, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_random_bridge, ablate_gate_disabled, ablate_arplus_no_anchor, ablate_arplus_shuffle_response, crossfm_ar_tabpfn3, crossfm_arplus_tabpfn3]
+    methods: [cache_tabicl, cache_tabpfn3, cache_llm, cache_llm_tool, logistic, catboost, lightgbm, xgboost, tabm, autogluon, tabicl_only, tabpfn3_only, llm_only, prediction_ensemble, llm_to_tfm, llm_to_tfm_repeated_routing, learned_summary_fusion, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, crossfm_round1, crossfm_round2, crossfm_round3, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_random_bridge, ablate_gate_disabled, ablate_arplus_no_anchor, ablate_arplus_shuffle_response, crossfm_ar_tabpfn3, crossfm_arplus_tabpfn3]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical]
     context_budgets: [10000, full]
   author_a_h100_robustness:
     owner_role: author_a
     accelerator: h100_80gb
+    selection_frozen_from: author_a_h100_primary
     datasets: [d1_kkbox, d2_online_retail]
     methods: [cache_tabicl, cache_llm, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, crossfm_ar, crossfm_arplus, ablate_shuffle_message, ablate_gate_disabled]
     stages: [response_bank, llm_cache, evaluate]
@@ -292,6 +308,7 @@ profiles:
   author_a_h100_scale:
     owner_role: author_a
     accelerator: h100_80gb
+    selection_frozen_from: author_a_h100_primary
     datasets: [b5_ieee_fraud, b6_amex_grouped]
     methods: [cache_tabicl, cache_tabpfn3, cache_llm, catboost, tabicl_only, tabpfn3_only, prediction_ensemble, crossfm_ar, crossfm_arplus, crossfm_ar_tabpfn3, crossfm_arplus_tabpfn3]
     stages: [response_bank, llm_cache, evaluate]
@@ -301,7 +318,7 @@ profiles:
     owner_role: author_b
     accelerator: kaggle_t4x2
     datasets: [b1_hotel_booking, b2_kick]
-    methods: [cache_tabicl, cache_llm, logistic, catboost, autogluon, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_shuffle_message]
+    methods: [cache_tabicl, cache_llm, logistic, catboost, autogluon, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_shuffle_message]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical]
     context_budgets: [2048]
@@ -309,7 +326,7 @@ profiles:
     owner_role: author_b
     accelerator: kaggle_t4x2
     datasets: [b3_emscad, b4_bank_churn]
-    methods: [cache_tabicl, cache_llm, logistic, catboost, autogluon, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_shuffle_message]
+    methods: [cache_tabicl, cache_llm, logistic, catboost, autogluon, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_shuffle_message]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical]
     context_budgets: [2048]
@@ -317,7 +334,7 @@ profiles:
     owner_role: author_b
     accelerator: kaggle_t4x2
     datasets: [d4_iranian_churn]
-    methods: [cache_tabicl, cache_tabpfn3, cache_llm, logistic, catboost, lightgbm, xgboost, tabicl_only, tabpfn3_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_gate_disabled, crossfm_ar_tabpfn3]
+    methods: [cache_tabicl, cache_tabpfn3, cache_llm, logistic, catboost, lightgbm, xgboost, tabicl_only, tabpfn3_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, textual_tool, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_no_semantic, ablate_uniform_posterior, ablate_hard_posterior, ablate_shuffle_message, ablate_gate_disabled, crossfm_ar_tabpfn3]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical, aliases, anonymized]
     context_budgets: [32, 128, 512, 2048, full]
@@ -325,7 +342,7 @@ profiles:
     owner_role: author_b
     accelerator: kaggle_t4x2
     datasets: [d3_retailrocket]
-    methods: [cache_tabicl, cache_llm, logistic, catboost, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, tfm_to_llm, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_shuffle_message, ablate_gate_disabled]
+    methods: [cache_tabicl, cache_llm, logistic, catboost, tabicl_only, llm_only, prediction_ensemble, llm_to_tfm, learned_summary_fusion, crossfm_ar, crossfm_arplus, crossfm_smr, ablate_shuffle_message, ablate_gate_disabled]
     stages: [response_bank, llm_cache, evaluate]
     schema_conditions: [canonical]
     context_budgets: [10000]
