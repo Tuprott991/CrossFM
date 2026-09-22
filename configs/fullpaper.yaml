@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v10-lci
+  protocol_id: crossfm-align-fullpaper-exploratory-v11-runtime
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -28,13 +28,16 @@ runtime:
     kaggle_t4x2: 15
     cpu: 5
   expected_package_versions:
-    torch: 2.6.0
     transformers: 4.57.6
     tabicl: 2.2.0
     tabpfn: 9.0.0
     scikit-learn: 1.6.1
     pandas: 2.2.3
     numpy: 1.26.4
+  expected_accelerator_package_versions:
+    h100_80gb: {torch: 2.6.0}
+    kaggle_t4x2: {torch: 2.10.0}
+    cpu: {}
 
 routing:
   representation: continuous_posterior

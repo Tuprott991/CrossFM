@@ -63,6 +63,24 @@ def _minimum_free_disk_gib(config: dict, accelerator: str) -> int:
     return minimum
 
 
+def _expected_package_versions(config: dict, accelerator: str) -> dict[str, str]:
+    """Merge portable pins with the immutable versions of a GPU base image."""
+    expected = {
+        str(package): str(value)
+        for package, value in config["runtime"].get(
+            "expected_package_versions", {},
+        ).items()
+    }
+    accelerator_versions = config["runtime"].get(
+        "expected_accelerator_package_versions", {},
+    )
+    expected.update({
+        str(package): str(value)
+        for package, value in accelerator_versions.get(accelerator, {}).items()
+    })
+    return expected
+
+
 def _model_preflight(config: dict, profile: str) -> dict:
     """Resolve pinned model metadata and the compact TabPFN checkpoint up front."""
     spec = config["profiles"][profile]
@@ -119,7 +137,8 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
         )
     installed = {}
     mismatched = {}
-    for package, expected in config["runtime"].get("expected_package_versions", {}).items():
+    expected_versions = _expected_package_versions(config, spec["accelerator"])
+    for package, expected in expected_versions.items():
         try:
             observed = version(package)
         except PackageNotFoundError:
@@ -170,8 +189,7 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
             raise RuntimeError(f"Expected one visible H100 80GB, found {report['gpus']}")
         if spec["accelerator"] == "h100_80gb" and not report["bf16_supported"]:
             raise RuntimeError("Visible H100 does not report BF16 support")
-        if spec["accelerator"] == "h100_80gb":
-            report["model_preflight"] = _model_preflight(config, profile)
+        report["model_preflight"] = _model_preflight(config, profile)
     atomic_json(output / "doctor.json", report)
     return report
 

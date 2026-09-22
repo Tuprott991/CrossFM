@@ -48,7 +48,7 @@ FLEET_SPEC.loader.exec_module(FLEET)
 def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
     assert config["experiment"]["protocol_id"] == (
-        "crossfm-align-fullpaper-exploratory-v10-lci"
+        "crossfm-align-fullpaper-exploratory-v11-runtime"
     )
     assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
     assert "llm_to_tfm_compute_matched" not in config["methods"]
@@ -61,6 +61,12 @@ def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     assert "cache_llm_tool" in config["profiles"]["author_b_kaggle_d4"]["methods"]
     assert config["runtime"]["minimum_free_disk_gib"] == {
         "h100_80gb": 50, "kaggle_t4x2": 15, "cpu": 5,
+    }
+    assert "torch" not in config["runtime"]["expected_package_versions"]
+    assert config["runtime"]["expected_accelerator_package_versions"] == {
+        "h100_80gb": {"torch": "2.6.0"},
+        "kaggle_t4x2": {"torch": "2.10.0"},
+        "cpu": {},
     }
     d3 = config["profiles"]["author_b_kaggle_d3"]
     assert d3["seeds"] == [25101, 25102, 25103, 25104, 25105]
@@ -129,12 +135,17 @@ def test_h100_model_preflight_resolves_declared_model_families(monkeypatch, tmp_
 
 
 def test_disk_preflight_threshold_is_accelerator_specific():
-    from crossfm.fullpaper.cli import _minimum_free_disk_gib
+    from crossfm.fullpaper.cli import (
+        _expected_package_versions, _minimum_free_disk_gib,
+    )
 
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
     assert _minimum_free_disk_gib(config, "kaggle_t4x2") == 15
     assert _minimum_free_disk_gib(config, "h100_80gb") == 50
     assert _minimum_free_disk_gib(config, "cpu") == 5
+    assert _expected_package_versions(config, "kaggle_t4x2")["torch"] == "2.10.0"
+    assert _expected_package_versions(config, "h100_80gb")["torch"] == "2.6.0"
+    assert "torch" not in _expected_package_versions(config, "cpu")
 
 
 def test_cost_balanced_sharding_is_deterministic_and_complete():

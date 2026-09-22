@@ -112,6 +112,16 @@ def validate_protocol(config: dict[str, Any]) -> None:
         values = (disk_requirement,)
     if any(int(value) < 0 for value in values):
         raise ValueError("minimum_free_disk_gib values must be non-negative")
+    accelerator_versions = config["runtime"].get(
+        "expected_accelerator_package_versions", {},
+    )
+    if accelerator_versions and set(accelerator_versions) != {
+        "h100_80gb", "kaggle_t4x2", "cpu",
+    }:
+        raise ValueError(
+            "expected_accelerator_package_versions must define h100_80gb, "
+            "kaggle_t4x2, and cpu"
+        )
 
 
 def _task_id(parts: list[str]) -> str:
