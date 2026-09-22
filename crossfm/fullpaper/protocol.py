@@ -61,6 +61,14 @@ def validate_protocol(config: dict[str, Any]) -> None:
             raise ValueError(f"Invalid dataset specification: {dataset_id}")
         if not spec.get("checksum_required", True):
             raise ValueError(f"Dataset {dataset_id} must require a checksum")
+        aliases = spec.get("feature_aliases")
+        if aliases is not None and (
+            not isinstance(aliases, dict)
+            or not aliases
+            or any(not str(key).strip() or not str(value).strip() for key, value in aliases.items())
+            or len(set(map(str, aliases.values()))) != len(aliases)
+        ):
+            raise ValueError(f"Dataset {dataset_id} has invalid feature_aliases")
     for name, spec in methods.items():
         if not _ID.match(name):
             raise ValueError(f"Invalid method name: {name}")
@@ -88,6 +96,19 @@ def validate_protocol(config: dict[str, Any]) -> None:
             raise ValueError(f"Invalid accelerator for profile {profile}")
         if spec.get("owner_role") not in {"author_a", "author_b", "any_author"}:
             raise ValueError(f"Invalid owner role for profile {profile}")
+        conditions = spec.get("schema_conditions", experiment["schema_conditions"])
+        if "aliases" in conditions:
+            for dataset_id in spec.get("datasets", []):
+                dataset = datasets[dataset_id]
+                if (
+                    dataset.get("loader") == "manifest_table"
+                    and not dataset.get("audit_manifest_required", False)
+                    and not dataset.get("feature_aliases")
+                ):
+                    raise ValueError(
+                        f"Profile {profile} schedules aliases for {dataset_id} "
+                        "without a validated feature_aliases mapping"
+                    )
         frozen_from = spec.get("selection_frozen_from")
         if frozen_from and frozen_from not in config["profiles"]:
             raise ValueError(f"Profile {profile} freezes selection from unknown profile {frozen_from}")

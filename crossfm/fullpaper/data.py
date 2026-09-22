@@ -358,7 +358,11 @@ def load_manifest_table(dataset_id: str, spec: dict[str, Any], data_root: Path) 
         )
         splits = {"train": np.sort(train), "validation": np.sort(validation), "test": np.sort(test)}
     descriptions = spec.get("feature_descriptions", {})
-    aliases = manifest["feature_aliases"] if spec.get("audit_manifest_required", False) else None
+    aliases = (
+        manifest["feature_aliases"]
+        if spec.get("audit_manifest_required", False)
+        else spec.get("feature_aliases")
+    )
     if aliases is not None:
         if set(aliases) != set(frame) or len(set(aliases.values())) != len(frame.columns):
             raise ValueError("Cohort aliases must uniquely cover every feature column")

@@ -26,7 +26,9 @@ from crossfm.fullpaper.models import (
     _FROZEN_MODEL_CACHE, _evict_frozen_models, _sklearn_matrix, candidate_views,
     fit_predict_tabular, row_prompts,
 )
-from crossfm.fullpaper.protocol import balanced_shards, load_protocol, tasks_for_profile
+from crossfm.fullpaper.protocol import (
+    balanced_shards, load_protocol, tasks_for_profile, validate_protocol,
+)
 from crossfm.fullpaper.routing import (
     ARPlusRouter, analytical_route, corrective_route, factorized_view_posterior,
     routing_features, SoftLatentCodebookRouter,
@@ -48,7 +50,7 @@ FLEET_SPEC.loader.exec_module(FLEET)
 def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
     config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
     assert config["experiment"]["protocol_id"] == (
-        "crossfm-align-fullpaper-exploratory-v11-runtime"
+        "crossfm-align-fullpaper-exploratory-v12-runtime-aliases"
     )
     assert config["experiment"]["classification"] == "exploratory_non_confirmatory"
     assert "llm_to_tfm_compute_matched" not in config["methods"]
@@ -75,6 +77,12 @@ def test_fullpaper_protocol_is_frozen_exploratory_and_profiles_enumerate():
         "ablate_lci_no_semantic", "ablate_lci_hard",
         "ablate_lci_shuffle_codes", "ablate_lci_fixed16",
     }.issubset(d3["methods"])
+    assert set(config["datasets"]["d4_iranian_churn"]["feature_aliases"]) == {
+        "Call  Failure", "Complains", "Subscription  Length", "Charge  Amount",
+        "Seconds of Use", "Frequency of use", "Frequency of SMS",
+        "Distinct Called Numbers", "Age Group", "Tariff Plan", "Status", "Age",
+        "Customer Value",
+    }
     for profile in config["profiles"]:
         tasks = tasks_for_profile(config, profile)
         assert tasks
@@ -89,6 +97,13 @@ def test_protocol_rejects_missing_cache_producer():
     config["profiles"]["author_b_kaggle_d4"]["methods"].remove("cache_llm_tool")
     with pytest.raises(ValueError, match="without required llm_cache producer"):
         tasks_for_profile(config, "author_b_kaggle_d4")
+
+
+def test_protocol_rejects_alias_condition_without_validated_manifest_aliases():
+    config = load_protocol(ROOT / "configs" / "fullpaper.yaml")
+    del config["datasets"]["d4_iranian_churn"]["feature_aliases"]
+    with pytest.raises(ValueError, match="without a validated feature_aliases mapping"):
+        validate_protocol(config)
 
 
 def test_binary_target_requires_and_preserves_explicit_positive_class():
@@ -146,6 +161,14 @@ def test_disk_preflight_threshold_is_accelerator_specific():
     assert _expected_package_versions(config, "kaggle_t4x2")["torch"] == "2.10.0"
     assert _expected_package_versions(config, "h100_80gb")["torch"] == "2.6.0"
     assert "torch" not in _expected_package_versions(config, "cpu")
+    d3_packages = _expected_package_versions(
+        config, "kaggle_t4x2", "author_b_kaggle_d3",
+    )
+    d4_packages = _expected_package_versions(
+        config, "kaggle_t4x2", "author_b_kaggle_d4",
+    )
+    assert "tabpfn" not in d3_packages
+    assert d4_packages["tabpfn"] == "9.0.0"
 
 
 def test_cost_balanced_sharding_is_deterministic_and_complete():
@@ -462,6 +485,40 @@ def test_kkbox_manifest_loader_requires_audited_hash_and_customer_groups(tmp_pat
     assert bundle.groups.tolist() == [f"c{i}" for i in range(6)]
     assert list(bundle.frame) == ["feature"]
     assert bundle.feature_aliases == {"feature": "account_signal"}
+
+
+def test_manifest_table_uses_configured_validated_aliases(tmp_path: Path):
+    from crossfm.fullpaper.cli import _configured_alias_preflight
+
+    table = tmp_path / "churn.csv"
+    pd.DataFrame({
+        "Call  Failure": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "Complains": [0, 1] * 5,
+        "Churn": [0, 1] * 5,
+    }).to_csv(table, index=False)
+    spec = {
+        "files": {"table": "churn.csv"}, "target_column": "Churn",
+        "split": "iid", "split_seed": 17, "task_description": "Predict churn.",
+        "feature_aliases": {
+            "Call  Failure": "unsuccessful_call_count",
+            "Complains": "complaint_flag",
+        },
+    }
+    bundle = load_manifest_table("d4", spec, tmp_path)
+    assert bundle.feature_aliases == spec["feature_aliases"]
+    report = _configured_alias_preflight({
+        "experiment": {"schema_conditions": ["canonical"]},
+        "profiles": {"p": {
+            "datasets": ["d4"], "schema_conditions": ["canonical", "aliases"],
+        }},
+        "datasets": {"d4": {**spec, "loader": "manifest_table"}},
+    }, "p", tmp_path)
+    assert report["d4"] == {
+        "feature_count": 2, "alias_count": 2, "validated_against_source": True,
+    }
+    broken = {**spec, "feature_aliases": {"Complains": "complaint_flag"}}
+    with pytest.raises(ValueError, match="uniquely cover every feature column"):
+        load_manifest_table("d4", broken, tmp_path)
 
 
 def test_beyondarena_grouped_validation_preserves_whole_groups(monkeypatch):

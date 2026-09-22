@@ -14,6 +14,7 @@ import traceback
 
 from .aggregate import aggregate_run
 from .artifacts import atomic_json, sha256_file
+from .data import load_dataset
 from .engine import FullPaperEngine, execute_task
 from .models import configure_h100_math
 from .protocol import balanced_shards, load_protocol, tasks_for_profile
@@ -63,7 +64,9 @@ def _minimum_free_disk_gib(config: dict, accelerator: str) -> int:
     return minimum
 
 
-def _expected_package_versions(config: dict, accelerator: str) -> dict[str, str]:
+def _expected_package_versions(
+    config: dict, accelerator: str, profile: str | None = None,
+) -> dict[str, str]:
     """Merge portable pins with the immutable versions of a GPU base image."""
     expected = {
         str(package): str(value)
@@ -78,6 +81,24 @@ def _expected_package_versions(config: dict, accelerator: str) -> dict[str, str]
         str(package): str(value)
         for package, value in accelerator_versions.get(accelerator, {}).items()
     })
+    if profile is not None:
+        methods = [
+            config["methods"][name]
+            for name in config["profiles"][profile].get("methods", [])
+        ]
+        required = {"numpy", "pandas", "scikit-learn"}
+        if accelerator != "cpu":
+            required.add("torch")
+        if any(method.get("backend") == "tabicl" for method in methods):
+            required.add("tabicl")
+        if any(method.get("backend") == "tabpfn3" for method in methods):
+            required.add("tabpfn")
+        if any(method.get("model_id") for method in methods):
+            required.add("transformers")
+        expected = {
+            package: value for package, value in expected.items()
+            if package in required
+        }
     return expected
 
 
@@ -121,6 +142,37 @@ def _model_preflight(config: dict, profile: str) -> dict:
     return report
 
 
+def _configured_alias_preflight(
+    config: dict, profile: str, data_root: Path,
+) -> dict[str, object]:
+    """Validate config-backed aliases against real source columns before GPU work."""
+    profile_spec = config["profiles"][profile]
+    conditions = profile_spec.get(
+        "schema_conditions", config["experiment"]["schema_conditions"],
+    )
+    if "aliases" not in conditions:
+        return {}
+    report: dict[str, object] = {}
+    for dataset_id in profile_spec.get("datasets", []):
+        dataset_spec = config["datasets"][dataset_id]
+        if not dataset_spec.get("feature_aliases"):
+            continue
+        bundle = load_dataset(dataset_id, dataset_spec, data_root)
+        aliases = bundle.feature_aliases or {}
+        if set(aliases) != set(bundle.frame.columns):
+            raise RuntimeError(
+                f"Configured aliases do not cover source columns for {dataset_id}"
+            )
+        if len(set(aliases.values())) != len(bundle.frame.columns):
+            raise RuntimeError(f"Configured aliases are not unique for {dataset_id}")
+        report[dataset_id] = {
+            "feature_count": len(bundle.frame.columns),
+            "alias_count": len(aliases),
+            "validated_against_source": True,
+        }
+    return report
+
+
 def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
     spec = config["profiles"][profile]
     report = {
@@ -137,7 +189,9 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
         )
     installed = {}
     mismatched = {}
-    expected_versions = _expected_package_versions(config, spec["accelerator"])
+    expected_versions = _expected_package_versions(
+        config, spec["accelerator"], profile,
+    )
     for package, expected in expected_versions.items():
         try:
             observed = version(package)
@@ -159,6 +213,9 @@ def doctor(config: dict, profile: str, output: Path, data_root: Path) -> dict:
     report["missing_data_files"] = missing_files
     if missing_files:
         raise FileNotFoundError(f"Missing required dataset files: {missing_files}")
+    report["configured_alias_preflight"] = _configured_alias_preflight(
+        config, profile, data_root,
+    )
     if spec["accelerator"] != "cpu":
         import torch
 

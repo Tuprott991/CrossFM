@@ -40,8 +40,8 @@ class Lane:
 # retry. D4 uses the official revision-pinned Hugging Face TabPFN-3 checkpoint.
 LANES = (
     Lane(
-        1, "author_b_kaggle_d4", "crossfm-full-paper-d4-exploratory-v2",
-        "CrossFM Full Paper D4 Exploratory V2",
+        1, "author_b_kaggle_d4", "crossfm-full-paper-d4-exploratory-v3",
+        "CrossFM Full Paper D4 Exploratory V3",
         "alinoranianesfahani", "iranian-churn-dataset",
     ),
     Lane(
@@ -55,8 +55,8 @@ LANES = (
         "CrossFM Frontier Semantic Exploratory V1",
     ),
     Lane(
-        4, "author_b_kaggle_d3", "crossfm-full-paper-d3-lci-exploratory-v1",
-        "CrossFM Full Paper D3 LCI Exploratory V1",
+        4, "author_b_kaggle_d3", "crossfm-full-paper-d3-lci-exploratory-v2",
+        "CrossFM Full Paper D3 LCI Exploratory V2",
         "retailrocket", "ecommerce-dataset",
     ),
 )

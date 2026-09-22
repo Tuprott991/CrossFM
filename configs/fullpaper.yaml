@@ -1,5 +1,5 @@
 experiment:
-  protocol_id: crossfm-align-fullpaper-exploratory-v11-runtime
+  protocol_id: crossfm-align-fullpaper-exploratory-v12-runtime-aliases
   classification: exploratory_non_confirmatory
   seeds: [20101, 20102, 20103, 20104, 20105]
   schema_conditions: [canonical, aliases, anonymized, shuffled_descriptions, missing_25, missing_50]
@@ -123,6 +123,34 @@ datasets:
     official_metric: average_precision
     task_description: Predict whether this telecommunications customer will churn.
     cost: 1.0
+    feature_descriptions:
+      "Call  Failure": Number of unsuccessful call attempts.
+      Complains: Whether the customer submitted a complaint.
+      "Subscription  Length": Total subscription duration in months.
+      "Charge  Amount": Ordinal recharge amount band from lowest to highest.
+      "Seconds of Use": Total call duration in seconds.
+      "Frequency of use": Total number of calls.
+      "Frequency of SMS": Total number of text messages.
+      "Distinct Called Numbers": Number of distinct telephone numbers called.
+      "Age Group": Ordinal customer age band.
+      "Tariff Plan": Pay-as-you-go or contractual billing plan.
+      Status: Active or non-active service status.
+      Age: Customer age in years.
+      "Customer Value": Calculated customer value score.
+    feature_aliases:
+      "Call  Failure": unsuccessful_call_count
+      Complains: complaint_flag
+      "Subscription  Length": tenure_months
+      "Charge  Amount": recharge_amount_band
+      "Seconds of Use": total_call_seconds
+      "Frequency of use": total_call_count
+      "Frequency of SMS": text_message_count
+      "Distinct Called Numbers": unique_numbers_called
+      "Age Group": age_band
+      "Tariff Plan": billing_plan_type
+      Status: service_activity_status
+      Age: customer_age_years
+      "Customer Value": computed_customer_value
     views:
       tenure: {patterns: [tenure, age]}
       usage: {patterns: [call, sms, use, frequency]}
